@@ -166,7 +166,7 @@ handle_info({vertices, Vertices, RefPid, SS},
 
 
 handle_info({vertices_done, Vertices, RefPid, SS}, 
-            #state{worker_info = {JobId, WId} = WInfo, 
+            #state{worker_info = {_JobId, _WId} = WInfo, 
                    num_workers = NumWorkers,
                    conductor_info = {_, CPid, _},
                    state = {reading_partition, {RefPid, SS, FDs}}} = State) ->
