@@ -2,6 +2,15 @@
  [
   {description, ""},
   {vsn, "1"},
+  {modules, [
+              worker_store,
+              phoebus_sup,
+              phoebus_app,
+              phoebus_source,
+              phoebus_utils,
+              phoebus_worker,
+              phoebus_conductor
+            ]},
   {registered, []},
   {applications, [
                   kernel,

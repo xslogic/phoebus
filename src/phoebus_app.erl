@@ -34,7 +34,7 @@
 %% @end
 %%--------------------------------------------------------------------
 start(_StartType, _StartArgs) ->
-  case 'TopSupervisor':start_link() of
+  case phoebus_sup:start_link() of
     {ok, Pid} ->
       {ok, Pid};
     Error ->

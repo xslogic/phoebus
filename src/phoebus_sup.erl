@@ -60,10 +60,10 @@ init([]) ->
   Shutdown = 2000,
   Type = worker,
 
-  AChild = {'AName', {'AModule', start_link, []},
+  _AChild = {'AName', {'AModule', start_link, []},
             Restart, Shutdown, Type, ['AModule']},
 
-  {ok, {SupFlags, [AChild]}}.
+  {ok, {SupFlags, []}}.
 
 %%%===================================================================
 %%% Internal functions

@@ -19,7 +19,8 @@
 
 -define(SERVER, ?MODULE). 
 
--record(state, {current_step = 0, state = init, workers = []}).
+-record(state, {current_step = 0, state = init, workers = [], 
+                vertices = 0, conf}).
 
 %%%===================================================================
 %%% API
@@ -61,7 +62,8 @@ init([Conf]) ->
   %% Mapping from VertexId to WorkerId
   Workers = start_workers(JobId, {erlang:node(), self()}, Partitions),
   ?DEBUG("Conductor started..", [{conf, Conf}, {node, erlang:node()}]),
-  {ok, #state{state = awaiting_worker_init, workers = Workers}}.
+  {ok, #state{state = awaiting_worker_init, 
+              workers = Workers, conf = Conf}}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -104,7 +106,18 @@ handle_cast(_Msg, State) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_info(_Info, State) ->
+handle_info({vertices_read, Vs, _From}, #state{vertices = NV} = State) ->
+  ?DEBUG("Vertices Uncovered..", [{num, NV + Vs}]),
+  {noreply, State#state{vertices = NV + Vs}};
+
+handle_info({awaiting_conductor, Vs, {WId, WPid}}, 
+            #state{vertices = NV} = State) ->
+  ?DEBUG("Vertices Uncovered..", [{num, NV + Vs}]),
+  ?DEBUG("Worker finished init..", [{worker_id, WId}, {worker_pid, WPid}]),
+  {noreply, State#state{vertices = NV + Vs}};
+
+handle_info(Msg, State) ->
+  ?DEBUG("Got Msg..", [{msg, Msg}]),
   {noreply, State}.
 
 %%--------------------------------------------------------------------
@@ -138,9 +151,19 @@ code_change(_OldVsn, State, _Extra) ->
 name(StrName) ->
   list_to_atom("conductor_" ++ StrName). 
 
-%% TODO : fix
-%% 1) make sure number of partitions are sent
-%% 
-start_workers(_JobId, _CRef, _Partitions) ->
-  [].
+start_workers(JobId, CRef, Partitions) ->
+  PartLen = length(Partitions),
+  lists:foldl(
+    fun(Part, Workers) ->
+        WId = length(Workers) + 1,
+        Node = phoebus_utils:map_to_node(JobId, WId),
+        %% TODO : Make Async
+        %% [{Node, wId, wPid, wMonRef}]
+        {ok, WPid} = 
+          rpc:call(Node, phoebus_worker, start_link, 
+                   [{JobId, WId}, PartLen, CRef, Part]),
+        MRef = erlang:monitor(process, WPid),
+        [{Node, WId, WPid, MRef}|Workers]
+    end, [], Partitions).
+
   

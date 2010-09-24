@@ -155,23 +155,23 @@ handle_info({'DOWN', CMRef, _, _, _},
 
 
 handle_info({vertices, Vertices, RefPid, SS}, 
-            #state{worker_info = WInfo, 
+            #state{worker_info = {_, WId} = WInfo, 
                    num_workers = NumWorkers,
                    conductor_info = {_, CPid, _},
                    state = {reading_partition, {RefPid, _, FDs}}} = State) ->
   NewFDs = handle_vertices(NumWorkers, WInfo, Vertices, 0, FDs),
-  CPid ! {vertices_read, length(Vertices), self()},
+  CPid ! {vertices_read, length(Vertices), {WId, self()}},
   {noreply, State#state{state = {reading_partition, {RefPid, SS, NewFDs}}}, 
    ?SOURCE_TIMEOUT()};
 
 
 handle_info({vertices_done, Vertices, RefPid, SS}, 
-            #state{worker_info = {_JobId, _WId} = WInfo, 
+            #state{worker_info = {_JobId, WId} = WInfo, 
                    num_workers = NumWorkers,
                    conductor_info = {_, CPid, _},
                    state = {reading_partition, {RefPid, SS, FDs}}} = State) ->
   NewFDs = handle_vertices(NumWorkers, WInfo, Vertices, 0, FDs),
-  CPid ! {awaiting_conductor, length(Vertices), self()},
+  CPid ! {awaiting_conductor, length(Vertices), {WId, self()}},
   phoebus_source:destroy(SS),
   lists:foreach(
     fun({_, FD}) -> worker_store:close_step_file(FD) end, NewFDs),
@@ -212,9 +212,10 @@ code_change(_OldVsn, State, _Extra) ->
 
 handle_vertices(NumWorkers, {JobId, MyWId}, Vertices, Step, FDs) ->
   lists:foldl(
-    fun(#vertex{vertex_id = VId} = Vertex) ->
+    fun(#vertex{vertex_id = VId} = Vertex, OldFDs) ->
         {Node, WId} = phoebus_utils:vertex_owner(JobId, VId, NumWorkers),
-        worker_store:store_vertex(Vertex, {Node, {JobId, MyWId, WId}}, Step, FDs)
+        worker_store:store_vertex(Vertex, {Node, {JobId, MyWId, WId}}, 
+                                  Step, OldFDs)
     end, FDs, Vertices).  
 
 %% TODO : implement

@@ -7,9 +7,9 @@
 %%% Created : 21 Sep 2010 by Arun Suresh <>
 %%%-------------------------------------------------------------------
 -module(phoebus_utils).
-
+-include("phoebus.hrl").
 %% API
--export([vertex_owner/3, all_nodes/0, job_id/0, get_env/2]).
+-export([vertex_owner/3, all_nodes/0, map_to_node/2, job_id/0, get_env/2]).
 
 %%%===================================================================
 %%% API
@@ -22,9 +22,13 @@ vertex_owner(JobId, VId, NumWorkers) ->
 
 %% TODO : This has to be configurable...
 map_to_node(_JobId, WorkerId) -> 
+  %% ?DEBUG("Here Start... ", [_JobId, WorkerId]),
   AllNodes = all_nodes(),
-  NodeIdx = ((WorkerId - 1) div length(AllNodes)) + 1,
-  lists:nth(NodeIdx, AllNodes).
+  NodeIdx = ((WorkerId - 1) rem length(AllNodes)) + 1,
+  X = lists:nth(NodeIdx, AllNodes),
+  %% ?DEBUG("Here End... ", [X, _JobId, WorkerId]),
+  X.
+  
 
 %% Returns [Nodes]
 all_nodes() ->

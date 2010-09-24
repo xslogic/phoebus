@@ -8,7 +8,7 @@
 %%%-------------------------------------------------------------------
 -author('arun.suresh@gmail.com').
 
--define(DEBUG(Str, Args), io:format(Str ++ ":~n~p~n", Args)).
+-define(DEBUG(Str, Args), io:format(Str ++ ":~n~p~n", [Args])).
 -define(JOB_DIR(JobId, WId), 
         phoebus_utils:get_env(store_dir, "/tmp/phoebus/") 
         ++ atom_to_list(erlang:node()) ++ "/" 
