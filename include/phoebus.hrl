@@ -38,6 +38,6 @@
         ++ integer_to_list(Idx)).
 
  
--record(vertex, {vertex_id, vertex_state = active, 
+-record(vertex, {vertex_id = nil, vertex_state = active, 
                  vertex_value, edge_list = []}).
 -record(edge, {value, target_vid}).
