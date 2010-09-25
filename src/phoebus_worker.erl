@@ -171,10 +171,19 @@ handle_info({vertices_done, Vertices, RefPid, SS},
                    conductor_info = {_, CPid, _},
                    state = {reading_partition, {RefPid, SS, FDs}}} = State) ->
   NewFDs = handle_vertices(NumWorkers, WInfo, Vertices, 0, FDs),
-  CPid ! {awaiting_conductor, length(Vertices), {WId, self()}},
   phoebus_source:destroy(SS),
   lists:foreach(
     fun({_, FD}) -> worker_store:close_step_file(FD) end, NewFDs),
+  CPid ! {awaiting_transfer_order, length(Vertices), {WId, self()}},
+  {noreply, State#state{state = awaiting_transfer_order}, ?CONDUCTOR_TIMEOUT()};
+
+
+handle_info(transfer_files, 
+            #state{worker_info = {_JobId, _WId} = WInfo, 
+                   num_workers = NumWorkers,
+                   state = awaiting_transfer_order} = State) ->
+  transfer_files(NumWorkers, WInfo, 0),
+  ?DEBUG("Done transferring files...", [{worker, WInfo}]),
   {noreply, State#state{state = awaiting_conductor}, ?CONDUCTOR_TIMEOUT()};
 
 handle_info(Info, #state{worker_info = WInfo} = State) ->
@@ -218,6 +227,16 @@ handle_vertices(NumWorkers, {JobId, MyWId}, Vertices, Step, FDs) ->
                                   Step, OldFDs)
     end, FDs, Vertices).  
 
+
+transfer_files(NumWorkers, {JobId, WId}, Step) ->
+  lists:foldl(
+    fun(W, Pids) when W =:= WId -> Pids;
+       (OWid, Pids) ->
+        Node = phoebus_utils:map_to_node(JobId, OWid),
+        Pid = worker_store:transfer_files(Node, {JobId, WId, OWid}, Step),
+        [Pid|Pids]
+    end, [], lists:seq(1, NumWorkers)).
+                     
 %% TODO : implement
 start_workers(_JobId, _WId, _Step) ->
   void.

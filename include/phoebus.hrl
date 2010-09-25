@@ -9,9 +9,9 @@
 -author('arun.suresh@gmail.com').
 
 -define(DEBUG(Str, Args), io:format(Str ++ ":~n~p~n", [Args])).
+-define(BASE_DIR(), phoebus_utils:get_env(store_dir, "/tmp/phoebus/")).
 -define(JOB_DIR(JobId, WId), 
-        phoebus_utils:get_env(store_dir, "/tmp/phoebus/") 
-        ++ atom_to_list(erlang:node()) ++ "/" 
+        ?BASE_DIR() ++ atom_to_list(erlang:node()) ++ "/" 
         ++ JobId ++ "/" 
         ++ integer_to_list(WId) ++ "/").
 -define(LAST_STEP_FILE(JobId, WId), 
@@ -25,6 +25,13 @@
         ?STEP_DIR(JobId, WId, Step) ++ "msg_queue_"
         ++ integer_to_list(Idx)).
 
+%% -define(ESTEP_VETEX_DATA(JobId, WId, Step, Idx), 
+%%         ?STEP_DIR(JobId, WId, Step) ++ "vertex_data_e" 
+%%         ++ integer_to_list(Idx)).
+%% -define(ESTEP_MSG_QUEUE(JobId, WId, Step, Idx), 
+%%         ?STEP_DIR(JobId, WId, Step) ++ "msg_queue_e"
+%%         ++ integer_to_list(Idx)).
+
 -define(RSTEP_DIR(JobId, WId, Step, RNode, RWId), 
         ?JOB_DIR(JobId, WId) 
         ++ integer_to_list(Step) ++ "/"
@@ -36,8 +43,13 @@
 -define(RSTEP_MSG_QUEUE(JobId, WId, Step, Idx), 
         ?RSTEP_DIR(JobId, WId, Step, RNode, RWId) ++ "msg_queue_"
         ++ integer_to_list(Idx)).
-
+                                                                          
  
--record(vertex, {vertex_id = nil, vertex_state = active, 
-                 vertex_value, edge_list = []}).
--record(edge, {value, target_vid}).
+-record(vertex, {vertex_id = nil, 
+                 vertex_name, 
+                 vertex_state = active, 
+                 vertex_value, 
+                 edge_list = []}).
+-record(edge, {value, 
+               target_vid, 
+               target_vname}).

@@ -58,7 +58,7 @@ init([Conf]) ->
   {ok, Partitions, SS2} = phoebus_source:partition_input(SS),
   phoebus_source:destroy(SS2),
   JobId = phoebus_utils:job_id(),
-  %% NOTE : Workers must be of the form [{Node, wId, wPid, wMonRef}]
+  %% NOTE : Workers must be of the form [{Node, wId, wPid, wMonRef, wStep}]
   %% Mapping from VertexId to WorkerId
   Workers = start_workers(JobId, {erlang:node(), self()}, Partitions),
   ?DEBUG("Conductor started..", [{conf, Conf}, {node, erlang:node()}]),
@@ -110,11 +110,39 @@ handle_info({vertices_read, Vs, _From}, #state{vertices = NV} = State) ->
   ?DEBUG("Vertices Uncovered..", [{num, NV + Vs}]),
   {noreply, State#state{vertices = NV + Vs}};
 
-handle_info({awaiting_conductor, Vs, {WId, WPid}}, 
-            #state{vertices = NV} = State) ->
+handle_info({awaiting_transfer_order, Vs, {WId, WPid}}, 
+            #state{vertices = NV, 
+                   workers = Workers} = State) ->
   ?DEBUG("Vertices Uncovered..", [{num, NV + Vs}]),
   ?DEBUG("Worker finished init..", [{worker_id, WId}, {worker_pid, WPid}]),
-  {noreply, State#state{vertices = NV + Vs}};
+  NewWorkers = 
+    case lists:keytake(WId, 2, Workers) of
+      {value, {Node, WId, WPid, MRef, -2}, W2} ->
+        [{Node, WId, WPid, MRef, -1}|W2];
+      _ -> Workers
+    end,
+  {noreply, State#state{vertices = NV + Vs, workers = NewWorkers}, 1000};
+
+handle_info(start_transfers, 
+            #state{workers = Workers} = State) ->
+  ?DEBUG("Asking Workers to transfer files..", [{workers, Workers}]),
+  lists:foreach(
+    fun({_Node, _WId, WPid, _MRef, _WStep}) ->
+        WPid ! transfer_files
+    end, Workers),
+  {noreply, State};
+
+handle_info(timeout, #state{workers = Workers} = State) ->
+  case lists:keyfind(-2, 5, Workers) of
+    false -> 
+      self() ! start_transfers,
+      {noreply, State};
+    {Node, WId, _, _, _} -> 
+      ?DEBUG("Asking Worker for finish loading..", 
+             [{node, Node}, {worker, WId}]),
+      {noreply, State, 1000}
+  end;
+
 
 handle_info(Msg, State) ->
   ?DEBUG("Got Msg..", [{msg, Msg}]),
@@ -163,7 +191,7 @@ start_workers(JobId, CRef, Partitions) ->
           rpc:call(Node, phoebus_worker, start_link, 
                    [{JobId, WId}, PartLen, CRef, Part]),
         MRef = erlang:monitor(process, WPid),
-        [{Node, WId, WPid, MRef}|Workers]
+        [{Node, WId, WPid, MRef, -2}|Workers]
     end, [], Partitions).
 
   

@@ -101,7 +101,8 @@ convert_to_rec([$\n | _], V, EList, _, _) ->
 convert_to_rec([$\t | Rest], V, EList, Buffer, vname) ->
   VName = lists:reverse(Buffer),
   VId = erlang:phash2(VName),
-  convert_to_rec(Rest, V#vertex{vertex_id = VId}, EList, [], vval);
+  convert_to_rec(Rest, V#vertex{vertex_id = VId, 
+                                vertex_name = VName}, EList, [], vval);
 convert_to_rec([$\t | Rest], V, EList, Buffer, vval) ->
   convert_to_rec(Rest, V#vertex{vertex_value = lists:reverse(Buffer)}, 
                  EList, [], eval);
@@ -110,7 +111,9 @@ convert_to_rec([$\t | Rest], V, EList, Buffer, eval) ->
 convert_to_rec([$\t | Rest], V, EList, Buffer, {tvname, EVal}) ->
   VName = lists:reverse(Buffer),
   VId = erlang:phash2(VName),
-  convert_to_rec(Rest, V, [#edge{value = EVal, target_vid = VId}|EList], 
+  convert_to_rec(Rest, V, [#edge{value = EVal, 
+                                 target_vid = VId, 
+                                 target_vname = VName}|EList], 
                  [], eval);
 convert_to_rec([X | Rest], V, EList, Buffer, Token) ->
   convert_to_rec(Rest, V, EList, [X|Buffer], Token).

@@ -22,18 +22,16 @@ vertex_owner(JobId, VId, NumWorkers) ->
 
 %% TODO : This has to be configurable...
 map_to_node(_JobId, WorkerId) -> 
-  %% ?DEBUG("Here Start... ", [_JobId, WorkerId]),
   AllNodes = all_nodes(),
   NodeIdx = ((WorkerId - 1) rem length(AllNodes)) + 1,
-  X = lists:nth(NodeIdx, AllNodes),
-  %% ?DEBUG("Here End... ", [X, _JobId, WorkerId]),
-  X.
+  lists:nth(NodeIdx, AllNodes).
   
 
 %% Returns [Nodes]
 all_nodes() ->
   %% TODO : implement
-  [erlang:node()].
+  ['phoebus1@needplant-lm', 'phoebus2@needplant-lm'].
+  %% [erlang:node()].
 
 %% Returns "nodename_timestamp"
 job_id() ->
