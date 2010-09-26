@@ -19,7 +19,7 @@
 
 -define(SERVER, ?MODULE). 
 
--record(state, {current_step = 0, state = init, workers = [], 
+-record(state, {current_step = 0, state = setup, workers = [], 
                 vertices = 0, conf}).
 
 %%%===================================================================
@@ -58,7 +58,7 @@ init([Conf]) ->
   {ok, Partitions, SS2} = phoebus_source:partition_input(SS),
   phoebus_source:destroy(SS2),
   JobId = phoebus_utils:job_id(),
-  %% NOTE : Workers must be of the form [{Node, wId, wPid, wMonRef, wStep}]
+  %% NOTE: Workers must be of the form [{Node, wId, wPid, wMonRef, wStep}]
   %% Mapping from VertexId to WorkerId
   Workers = start_workers(JobId, {erlang:node(), self()}, Partitions),
   ?DEBUG("Conductor started..", [{conf, Conf}, {node, erlang:node()}]),
@@ -123,16 +123,16 @@ handle_info({awaiting_transfer_order, Vs, {WId, WPid}},
     end,
   {noreply, State#state{vertices = NV + Vs, workers = NewWorkers}, 1000};
 
-handle_info(start_transfers, 
+handle_info(execute_file_transfers, 
             #state{workers = Workers} = State) ->
   ?DEBUG("Asking Workers to transfer files..", [{workers, Workers}]),
   lists:foreach(
     fun({_Node, _WId, WPid, _MRef, _WStep}) ->
         WPid ! transfer_files
     end, Workers),
-  {noreply, State};
+  {noreply, State#state{state = awaiting_finish_file_transfer}};
 
-handle_info(timeout, #state{workers = Workers} = State) ->
+handle_info(timeout, #state{state = setup, workers = Workers} = State) ->
   case lists:keyfind(-2, 5, Workers) of
     false -> 
       self() ! start_transfers,

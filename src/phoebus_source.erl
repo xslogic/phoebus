@@ -86,8 +86,8 @@ reader_loop(FD, Pid, State) ->
           end
       end, {[], false}, lists:seq(1, 10)),
   case IsDone of
-    true -> Pid ! {vertices_done, Recs, self(), State};
-    _ -> Pid ! {vertices, Recs, self(), State},
+    true -> gen_fsm:send_event(Pid, {vertices_done, Recs, self(), State});
+    _ -> gen_fsm:send_event(Pid, {vertices, Recs, self(), State}),
          reader_loop(FD, Pid, State)
   end.
       
