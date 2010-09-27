@@ -130,6 +130,7 @@ vsplit_phase1({vertices, Vertices, RefPid, SS},
                      worker_info = {JobId, WId} = WInfo, 
                      num_workers = NumWorkers,
                      part_file = Partition,
+                     table = Table,
                      sub_state = {reading_partition, {RefPid, _, FDs}}} = 
                 State) ->
   ?DEBUG("Worker In State.. ", [{state, vsplit_phase1}, 
@@ -139,6 +140,12 @@ vsplit_phase1({vertices, Vertices, RefPid, SS},
   NewFDs = handle_vertices(NumWorkers, WInfo, Vertices, 0, FDs),
   notify_master({MNode, MPid}, {vsplit_phase1_inter, WId, 
                                 length(Vertices)}),
+  worker_store:sync_table(Table, vertex, false),
+  %% TName = worker_store:table_name(Table, vertex),
+  %% case dets:info(TName, size) > 1000 of
+  %%   true -> dets:sync(TName);
+  %%   _ -> void
+  %% end,
   {next_state, vsplit_phase1, 
    State#state{sub_state = {reading_partition, {RefPid, SS, NewFDs}}}, 
    ?SOURCE_TIMEOUT()};
@@ -148,6 +155,7 @@ vsplit_phase1({vertices_done, Vertices, RefPid, SS},
                      worker_info = {JobId, WId} = WInfo, 
                      num_workers = NumWorkers,
                      part_file = Partition,
+                     table = Table,
                      sub_state = {reading_partition, {RefPid, _, FDs}}} = 
                 State) ->
   ?DEBUG("Worker In State.. ", [{state, vsplit_phase1}, 
@@ -157,9 +165,12 @@ vsplit_phase1({vertices_done, Vertices, RefPid, SS},
                                 {worker, WId}]),
   NewFDs = handle_vertices(NumWorkers, WInfo, Vertices, 0, FDs),
   phoebus_source:destroy(SS),
+  worker_store:sync_table(Table, vertex, true),
   lists:foreach(
     fun({_, FD}) -> worker_store:close_step_file(FD) end, NewFDs),
-  notify_master({MNode, MPid}, {vsplit_phase1_done, WId, length(Vertices)}),
+  notify_master({MNode, MPid}, {vsplit_phase1_inter, WId, 
+                                length(Vertices)}),
+  notify_master({MNode, MPid}, {vsplit_phase1_done, WId, 0}),
   ?DEBUG("Worker Exiting State.. ", [{state, vsplit_phase1}, 
                                      {job, JobId}, {worker, WId}]),
   {next_state, await_master, State#state{sub_state = none}, 
@@ -210,7 +221,7 @@ post_algo(_Event, #state{master_info = {MNode, MPid, _},
   {next_state, await_master, State}.
 
 store_result(_Event, State) ->
-  {stop, normal, State}.
+  {next_state, await_master, State}.
 
 
 %% ------------------------------------------------------------------------
@@ -345,7 +356,7 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%%===================================================================
 handle_vertices(NumWorkers, {JobId, MyWId}, Vertices, Step, FDs) ->
   lists:foldl(
-    fun(#vertex{vertex_id = VId} = Vertex, OldFDs) ->
+    fun({VId, _, _, _, _} = Vertex, OldFDs) ->
         {Node, WId} = phoebus_utils:vertex_owner(JobId, VId, NumWorkers),
         worker_store:store_vertex(Vertex, {Node, {JobId, MyWId, WId}}, 
                                   Step, OldFDs)
@@ -367,5 +378,10 @@ notify_master({MNode, MPid}, Notification) ->
 %% TODO : have to implemnt.. using a table manager..
 acquire_table(JobId, WId) ->
   Table = list_to_atom("test_table_" ++ integer_to_list(WId)),
+  %% Vtable = Worker_store:table_name(Table, vertex),
+  %% MTable = worker_store:table_name(Table, msg),
   ets:insert(table_mapping, {{JobId, WId}, Table}), 
+  worker_store:init_step_file(vertex, JobId, WId, [write], 0),
+  %% dets:open_file(MTable, 
+  %%                [{file, step_data(msg, JobId, WId, Step, Idx)}]);
   Table.

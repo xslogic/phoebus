@@ -21,6 +21,7 @@
          post_algo/2,
          check_algo_finish/2,
          store_result/2,
+         end_state/2,
          state_name/3, handle_event/3,
          handle_sync_event/4, handle_info/3, terminate/3, code_change/4]).
 
@@ -171,11 +172,11 @@ check_algo_finish(timeout, #state{step = Step, max_steps = MaxSteps,
 store_result({store_result_done, WId, _WData}, 
               #state{workers = Workers} = State) ->
   {NewWorkers, NextState} = 
-    update_workers(store_result, all_done, bla, Workers, WId),
-  case NextState of
-    all_done -> {stop, normal, State};
-    _ -> {next_state, NextState, State#state{workers = NewWorkers}}
-  end.
+    update_workers(store_result, end_state, bla, Workers, WId),
+  {next_state, NextState, State#state{workers = NewWorkers}}.
+
+end_state(_Event, State) ->
+  {next_state, end_state, State}.
 
 %%--------------------------------------------------------------------
 %% @private

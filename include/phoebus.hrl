@@ -51,6 +51,3 @@
                  vertex_state = active, 
                  vertex_value, 
                  edge_list = []}).
--record(edge, {value, 
-               target_vid, 
-               target_vname}).

@@ -62,42 +62,66 @@ check_dir(URI, Conf) ->
       
 start_reading(file, File, State) ->
   MyPid = self(),
-  RPid = spawn(fun() -> reader_loop({init, File}, MyPid, State) end),
+  RPid = spawn(fun() -> reader_loop({init, File}, MyPid, {State, []}) end),
   {ok, RPid, State}.
 
 
 reader_loop({init, File}, Pid, State) ->
-  {ok, FD} = file:open(File, [read, {read_ahead, 4096}]),
+  {ok, FD} = file:open(File, [raw, {read_ahead, 16384}]),
   reader_loop(FD, Pid, State);
-reader_loop(FD, Pid, State) ->
-  {Recs, IsDone} = 
-    lists:foldl(
-      fun(_, {Records, true}) -> {Records, true};
-         (_, {Records, X}) ->
-          case file:read_line(FD) of
-            {ok, Line} -> 
-              case convert_to_rec(Line) of
-                #vertex{vertex_id = nil} -> {Records, X};
-                V -> {[V|Records], X}
-              end;
-            eof -> 
-              file:close(FD),
-              {Records, true}
+reader_loop(FD, Pid, {State, Buffer}) ->
+  X = file:read_line(FD),
+  %% io:format("~n~n X : [~p][~p] ~n~n", [X, State]),
+  case X of
+    {ok, Line} ->
+      Y = convert_to_rec(Line),
+      %% io:format("~n~n Y : [~p][~p] ~n~n", [Y, State]),
+      case Y of
+        nil -> reader_loop(FD, Pid, {State, Buffer});
+        V -> 
+          case length(Buffer) > 100 of
+            true ->
+              gen_fsm:send_event(Pid, {vertices, [V|Buffer], self(), State}),
+              reader_loop(FD, Pid, {State, []});
+            _ ->
+              reader_loop(FD, Pid, {State, [V|Buffer]})
           end
-      end, {[], false}, lists:seq(1, 10)),
-  case IsDone of
-    true -> gen_fsm:send_event(Pid, {vertices_done, Recs, self(), State});
-    _ -> gen_fsm:send_event(Pid, {vertices, Recs, self(), State}),
-         reader_loop(FD, Pid, State)
+      end;
+    eof ->
+      gen_fsm:send_event(Pid, {vertices_done, Buffer, self(), State}),
+      file:close(FD)
   end.
+  %% {Recs, IsDone} = 
+  %%   lists:foldl(
+  %%     fun(_, {Records, true}) -> {Records, true};
+  %%        (_, {Records, X}) ->
+  %%         case file:read_line(FD) of
+  %%           {ok, Line} -> 
+  %%             case convert_to_rec(Line) of
+  %%               nil -> {Records, X};
+  %%               V -> {[V|Records], X}
+  %%             end;
+  %%           eof -> 
+  %%             file:close(FD),
+  %%             {Records, true}
+  %%         end
+  %%     end, {[], false}, lists:seq(1, 100)),
+  %% case IsDone of
+  %%   true -> gen_fsm:send_event(Pid, {vertices_done, Recs, self(), State});
+  %%   _ -> gen_fsm:send_event(Pid, {vertices, Recs, self(), State}),
+  %%        reader_loop(FD, Pid, State)
+  %% end.
       
   
+%% {Vid, VName, VVal, VState, [{EVal, VName}]
 %% vname \t vval \t [eval \t tvname \t].. \n
 convert_to_rec(Line) ->
   convert_to_rec(Line, #vertex{}, [], [], vname).
 
+convert_to_rec([$\n | _], #vertex{vertex_id = nil}, _, _, _) -> nil;
 convert_to_rec([$\n | _], V, EList, _, _) ->
-  V#vertex{edge_list = EList};
+  {V#vertex.vertex_id, V#vertex.vertex_name, V#vertex.vertex_value,
+   V#vertex.vertex_state, EList};
 convert_to_rec([$\t | Rest], V, EList, Buffer, vname) ->
   VName = lists:reverse(Buffer),
   VId = erlang:phash2(VName),
@@ -110,10 +134,6 @@ convert_to_rec([$\t | Rest], V, EList, Buffer, eval) ->
   convert_to_rec(Rest, V, EList, [], {tvname, lists:reverse(Buffer)});
 convert_to_rec([$\t | Rest], V, EList, Buffer, {tvname, EVal}) ->
   VName = lists:reverse(Buffer),
-  VId = erlang:phash2(VName),
-  convert_to_rec(Rest, V, [#edge{value = EVal, 
-                                 target_vid = VId, 
-                                 target_vname = VName}|EList], 
-                 [], eval);
+  convert_to_rec(Rest, V, [{EVal, VName}|EList], [], eval);
 convert_to_rec([X | Rest], V, EList, Buffer, Token) ->
   convert_to_rec(Rest, V, EList, [X|Buffer], Token).
