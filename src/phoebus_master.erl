@@ -67,7 +67,10 @@ init([Conf]) ->
   phoebus_source:destroy(SS2),
   JobId = phoebus_utils:job_id(),
   %% NOTE: Workers must be of the form [{Node, wId, wPid, wMonRef, wState}]
-  Workers = start_workers(JobId, {erlang:node(), self()}, Partitions),
+  Workers = start_workers(JobId, {erlang:node(), self()}, 
+                          Partitions, 
+                          proplists:get_value(algo_fun, Conf, none),
+                          proplists:get_value(combine_fun, Conf, none)),
   {ok, vsplit_phase1, 
    #state{max_steps = proplists:get_value(max_steps, Conf, 100000),
           job_id = JobId,
@@ -324,7 +327,7 @@ notify_workers2(Workers, NextState, ExtraInfo) ->
 name(StrName) ->
   list_to_atom("master_" ++ StrName). 
 
-start_workers(JobId, MasterInfo, Partitions) ->
+start_workers(JobId, MasterInfo, Partitions, AlgoFun, CombineFun) ->
   PartLen = length(Partitions),
   lists:foldl(
     fun(Part, Workers) ->
@@ -334,7 +337,8 @@ start_workers(JobId, MasterInfo, Partitions) ->
         %% [{Node, wId, wPid, wMonRef}]
         {ok, WPid} = 
           rpc:call(Node, phoebus_worker, start_link, 
-                   [{JobId, WId}, PartLen, MasterInfo, Part]),
+                   [{JobId, WId}, PartLen, MasterInfo, Part, 
+                    AlgoFun, CombineFun]),
         MRef = erlang:monitor(process, WPid),
         [{Node, WId, WPid, MRef, vsplit_phase1}|Workers]
     end, [], Partitions).

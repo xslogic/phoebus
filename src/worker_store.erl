@@ -11,10 +11,11 @@
 
 %% API
 -export([purge/0, init/2, store_vertex/4, 
-         init_step_file/4, init_step_file/5, 
+         init_step_file/5, init_step_file/6, 
          close_step_file/1, 
          transfer_files/3,
-         create_vertex_receiver/5,
+         create_receiver/6,
+         deserialize_rec/1,
          commit_step/3]).
 
 %%%===================================================================
@@ -38,68 +39,82 @@ init(JobId, WId) ->
       end
   end.
 
-init_step_file(JobId, WId, Mode, Step) ->
-  init_step_file(JobId, WId, Mode, Step, Step).
+init_step_file(Type, JobId, WId, Mode, Step) ->
+  init_step_file(Type, JobId, WId, Mode, Step, Step).
 
-init_step_file(JobId, WId, Mode, Step, Idx) -> 
+init_step_file(Type, JobId, WId, _Mode, Step, Idx) -> 
   ok = mkdir_p(?STEP_DIR(JobId, WId, Step)),
-  file:open(?STEP_VETEX_DATA(JobId, WId, Step, Idx), Mode).
+  [{_, Table}] = ets:lookup(table_mapping, {JobId, WId}),
+  TableName = table_name(Table, Type),
+  case dets:info(TableName) of
+    undefined -> 
+      dets:open_file(TableName, 
+                     [{file, step_data(Type, JobId, WId, Step, Idx)}]);
+    _ -> {ok, TableName}
+  end.
+        
 
-init_rstep_file(JobId, WId, RNode, RWId, Mode, Step) ->
-  init_rstep_file(JobId, WId, RNode, RWId, Mode, Step, Step).
+init_rstep_file(Type, JobId, WId, RNode, RWId, Mode, Step) ->
+  init_rstep_file(Type, JobId, WId, RNode, RWId, Mode, Step, Step).
 
-init_rstep_file(JobId, WId, RNode, RWId, Mode, Step, Idx) -> 
+init_rstep_file(Type, JobId, WId, RNode, RWId, Mode, Step, Idx) -> 
   ok = mkdir_p(?RSTEP_DIR(JobId, WId, Step, RNode, RWId)),
-  file:open(?RSTEP_VETEX_DATA(JobId, WId, Step, RNode, RWId, Idx), Mode).
+  file:open(rstep_data(Type, JobId, WId, Step, RNode, RWId, Idx), Mode).
   
 close_step_file(FD) ->
-  file:close(FD).
+  case is_atom(FD) of
+    false -> file:close(FD);
+    _ -> void
+  end.
 
 commit_step(JobId, WId, Step) ->
   {ok, FD} = file:open(?LAST_STEP_FILE(JobId, WId), [write]),
   file:write(FD, integer_to_list(Step)),
   file:close(FD).
 
-store_vertex(Vertex, {Node, {JobId, MyWId, WId}}, Step, FDs) ->
+store_vertex(Vertex, {_, {JobId, MyWId, WId}}, Step, FDs) when WId =:= MyWId->
   {ok, FD} = 
-    case WId of
-      MyWId -> 
-        case proplists:get_value(MyWId, FDs) of
-          undefined -> init_step_file(JobId, MyWId, [write], Step);
-          OldFD -> {ok, OldFD}
-        end;
-      _ ->
+    case proplists:get_value(MyWId, FDs) of
+      undefined -> init_step_file(vertex, JobId, MyWId, [write], Step);
+      OldFD -> {ok, OldFD}
+    end,
+  dets:insert(FD, {Vertex#vertex.vertex_id, Vertex}),
+  TempFDs = lists:keydelete(WId, 1, FDs),
+  [{WId, FD}|TempFDs];
+store_vertex(Vertex, {Node, {JobId, MyWId, WId}}, Step, FDs) ->
+  case erlang:node() of
+    Node ->
+      TableName = 
+        case proplists:get_value(WId, FDs) of
+          undefined -> get_other_worker_table(JobId, WId, vertex);
+          T -> T
+        end,
+      dets:insert(TableName, {Vertex#vertex.vertex_id, Vertex}),
+      TempFDs = lists:keydelete(WId, 1, FDs),
+      [{WId, TableName}|TempFDs];
+    _ ->        
+      VRec = serialize_rec(Vertex),
+      {ok, FD} = 
         case proplists:get_value(WId, FDs) of
           undefined -> 
-            init_rstep_file(JobId, MyWId, Node, WId, [write], Step);
+            init_rstep_file(vertex, JobId, MyWId, Node, WId, [write], Step);
           OldFD -> {ok, OldFD}
-        end
-    end,
-  VRec = construct_rec(Vertex),
-  file:write(FD, VRec),
-  TempFDs = lists:keydelete(WId, 1, FDs),
-  [{WId, FD}|TempFDs].
+        end,
+      file:write(FD, VRec),
+      TempFDs = lists:keydelete(WId, 1, FDs),
+      [{WId, FD}|TempFDs]
+  end.
+
 
 transfer_files(Node, {JobId, WId, OWid}, Step) ->  
   MyPid = self(),
   spawn(fun() -> transfer_loop(init, MyPid, Node, 
                                {JobId, WId, OWid}, Step) end).
 
-create_vertex_receiver(JobId, WId, Mode, Step, Idx) ->
+create_receiver(Type, JobId, WId, Mode, Step, Idx) ->
   spawn(fun() ->
-            vrecv_loop(init, JobId, WId, Mode, Step, Idx)
+            recv_loop({init, Type}, JobId, WId, Mode, Step, Idx)
         end).
-
-vrecv_loop(init, JobId, WId, Mode, Step, Idx) ->
-  {ok, FD} = init_step_file(JobId, WId, Mode, Step, Idx),
-  vrecv_loop(FD, JobId, WId, Mode, Step, Idx);
-vrecv_loop(WriteFD, JobId, WId, Mode, Step, Idx) ->
-  receive
-    {data, Data} -> 
-      file:write(WriteFD, Data), 
-      vrecv_loop(WriteFD, JobId, WId, Mode, Step, Idx);
-    close -> file:close(WriteFD)
-  end.
 
 %%--------------------------------------------------------------------
 %% @doc`
@@ -120,53 +135,135 @@ transfer_loop(init, _MyPid, Node, {JobId, WId, OWid}, Step) ->
     end, FList).
 
 
-%% init_step_file(JobId, WId, Mode, Step, Idx) -> 
-handle_transfer(vertex, Node, LocalFName, JobId, OWid, Step, WId) ->
-  case erlang:node() of
-    Node ->
-      file:rename(LocalFName, ?STEP_VETEX_DATA(JobId, OWid, Step, WId));
-    _ -> 
-      WriteFD = 
-        rpc:call(Node, worker_store, create_vertex_receiver,
-                          [JobId, OWid, [write, binary], Step, WId]),
-      {ok, ReadFD} =
-        file:open(LocalFName, [read, binary]),
-      read_write_loop(ReadFD, WriteFD)        
-  end;
-handle_transfer(msg, Node, LocalFName, JobId, OWid, Step, WId) ->
-  case erlang:node() of
-    Node ->
-      file:rename(LocalFName, ?STEP_MSG_QUEUE(JobId, OWid, Step, WId));
-    _ -> void
-  end;
-handle_transfer(_, _Node, _LocalFName, _JobId, _OWid, _Step, _WId) ->
-  void.
+handle_transfer(Type, Node, LocalFName, JobId, OWid, Step, WId) ->
+  WriteFD = 
+    rpc:call(Node, worker_store, create_receiver,
+             [Type, JobId, OWid, [write, binary], Step, WId]),
+  {ok, ReadFD} =
+    file:open(LocalFName, [read, binary]),
+  trans_loop(LocalFName, ReadFD, WriteFD).
+        
 
-
-read_write_loop(ReadFD, WriteFD) ->
+trans_loop(LocalFName, ReadFD, WriteFD) ->
   case file:read(ReadFD, 16384) of
     {ok, Data} ->
       WriteFD ! {data, Data},
-      read_write_loop(ReadFD, WriteFD);
+      trans_loop(LocalFName, ReadFD, WriteFD);
     eof ->
       file:close(ReadFD),
+      file:delete(LocalFName),
       WriteFD ! close
   end.
+
+recv_loop({init, Type}, JobId, WId, Mode, Step, Idx) ->
+  {ok, FD} = init_step_file(Type, JobId, WId, Mode, Step, Idx),
+  recv_loop({FD, <<>>}, JobId, WId, Mode, Step, Idx);
+recv_loop({WriteFD, Buffer}, JobId, WId, Mode, Step, Idx) ->
+  receive
+    {data, Data} -> 
+      BinLines = re:split(Data, "\n"),
+      %% NOTE : Extracted Recs must be [{vId, VRec}]
+      {VRecs, Rem} = extract_records(Buffer, BinLines),
+      dets:insert(WriteFD, VRecs),
+      recv_loop({WriteFD, Rem}, JobId, WId, Mode, Step, Idx);
+    close -> file:close(WriteFD)
+  end.
+
+
+wait_table_loop(_Type, _JobId, _OWid, Pid, 0) -> Pid ! {error, enoent};
+wait_table_loop(Type, JobId, OWid, Pid, Counter) ->
+  case ets:lookup(table_mapping, {JobId, OWid}) of
+    [{_, Table}] ->
+      case dets:info(table_name(Table, Type)) of
+        undefined ->
+          timer:sleep(5000), 
+          wait_table_loop(Type, JobId, OWid, Pid, Counter - 1);
+        _ ->Pid ! {table, Table}
+      end;
+    _ -> 
+      timer:sleep(5000), 
+      wait_table_loop(Type, JobId, OWid, Pid, Counter - 1)
+  end.
+
+
+get_other_worker_table(JobId, OWId, Type) ->
+  Pid = self(),
+  spawn(fun() -> wait_table_loop(Type, JobId, OWId, Pid, 25) end),
+  Table = 
+    receive
+      {table, T} -> T;
+      %% TODO : have to think of something...
+      {error, enoent} -> backup_table
+    end,
+  table_name(Table, Type).
+
+extract_records(Buffer, BinLines) ->
+  lists:foldl(
+    fun(BinLine, {AccRecs, Buff}) ->
+        L = <<Buff/binary, BinLine/binary>>,
+        case deserialize_rec(L) of
+          null -> {AccRecs, <<>>};
+          incomplete -> {AccRecs, L};
+          Rec -> {[{Rec#vertex.vertex_id, Rec}|AccRecs], <<>>}
+        end
+    end, {[], Buffer}, BinLines).
   
 
-construct_rec(#vertex{vertex_id = VId, vertex_name = VName, 
+deserialize_rec(<<>>) -> null;
+deserialize_rec(Line) ->
+  BSize = size(Line) - 1,
+  <<_:BSize/binary, Last/binary>> = Line,
+  case Last of
+    <<$\r>> -> deserialize_rec(Line, #vertex{}, [], <<>>, vid);
+    _ -> incomplete
+  end.
+  
+%% vid \t vname \t vstate \t vval \t [eval \t tvid\t tvname \t].. \r\n
+deserialize_rec(<<$\r, _/binary>>, V, EList, _, _) ->
+  V#vertex{edge_list = EList};
+deserialize_rec(<<$\t, Rest/binary>>, V, EList, Buffer, vid) ->
+  VId = list_to_integer(binary_to_list(Buffer)),
+  deserialize_rec(Rest, V#vertex{vertex_id = VId}, EList, <<>>, vname);
+deserialize_rec(<<$\t, Rest/binary>>, V, EList, Buffer, vname) ->
+  VName = binary_to_list(Buffer),
+  deserialize_rec(Rest, V#vertex{vertex_name = VName}, EList, <<>>, vstate);
+deserialize_rec(<<$\t, Rest/binary>>, V, EList, Buffer, vstate) ->
+  VState = list_to_atom(binary_to_list(Buffer)),
+  deserialize_rec(Rest, V#vertex{vertex_state = VState}, EList, <<>>, vval);
+deserialize_rec(<<$\t, Rest/binary>>, V, EList, Buffer, vval) ->
+  VVal = binary_to_list(Buffer),
+  deserialize_rec(Rest, V#vertex{vertex_value = VVal}, EList, <<>>, eval);
+deserialize_rec(<<$\t, Rest/binary>>, V, EList, Buffer, eval) ->
+  deserialize_rec(Rest, V, EList, <<>>, {tvid, binary_to_list(Buffer)});
+deserialize_rec(<<$\t, Rest/binary>>, V, EList, Buffer, {tvid, EVal}) ->
+  deserialize_rec(Rest, V, EList, <<>>, 
+                  {tvname, EVal, list_to_integer(binary_to_list(Buffer))});
+deserialize_rec(<<$\t, Rest/binary>>, V, EList, Buffer, 
+                {tvname, EVal, TVid}) ->
+  VName = binary_to_list(Buffer),
+  deserialize_rec(Rest, V, [#edge{value = EVal, 
+                                 target_vid = TVid, 
+                                 target_vname = VName}|EList], <<>>, eval);
+deserialize_rec(<<X, Rest/binary>>, V, EList, Buffer, Token) ->
+  deserialize_rec(Rest, V, EList, <<Buffer/binary, X>>, Token).  
+
+
+
+
+
+serialize_rec(#vertex{vertex_id = VId, vertex_name = VName, 
                       vertex_state = VState, 
-                      vertex_value = VVal, edge_list = EList}) ->
+                      vertex_value = VVal, edge_list = EList}) ->  
   lists:concat([integer_to_list(VId), "\t",
                 VName, "\t",
                 atom_to_list(VState), "\t",
-                VVal, "\t", construct_edge_rec(EList, [])]).
+                VVal, "\t", serialize_edge_rec(EList, [])]).
 
-construct_edge_rec([], Done) ->
-  Done ++ "\n";
-construct_edge_rec([#edge{value = EVal, target_vname = VName, 
+serialize_edge_rec([], Done) ->
+  Done ++ "\r\n";
+serialize_edge_rec([#edge{value = EVal, target_vname = VName, 
                           target_vid = VId}|Rest], Done) ->
-  construct_edge_rec(Rest, 
+  serialize_edge_rec(Rest, 
                      lists:concat([EVal, "\t", 
                                    integer_to_list(VId), "\t", 
                                    VName, "\t", Done])).
@@ -203,3 +300,17 @@ file_type(F) ->
            _ -> unknown
          end
   end.
+
+step_data(vertex, JobId, WId, Step, Idx) ->
+        ?STEP_VETEX_DATA(JobId, WId, Step, Idx);
+step_data(msg, JobId, WId, Step, Idx) ->
+        ?STEP_MSG_QUEUE(JobId, WId, Step, Idx).
+
+rstep_data(vertex, JobId, WId, Step, RNode, RWId, Idx) ->
+        ?RSTEP_VETEX_DATA(JobId, WId, Step, RNode, RWId, Idx);
+rstep_data(msg, JobId, WId, Step, RNode, RWId, Idx) ->
+        ?RSTEP_MSG_QUEUE(JobId, WId, Step, RNode, RWId, Idx).
+
+
+table_name(Table, Type) ->
+  list_to_atom(atom_to_list(Table) ++ "_" ++ atom_to_list(Type)).

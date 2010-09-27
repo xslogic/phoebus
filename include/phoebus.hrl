@@ -16,6 +16,7 @@
         ++ integer_to_list(WId) ++ "/").
 -define(LAST_STEP_FILE(JobId, WId), 
         ?JOB_DIR(JobId, WId) ++ "last_step").
+
 -define(STEP_DIR(JobId, WId, Step), 
         ?JOB_DIR(JobId, WId) ++ integer_to_list(Step) ++ "/").
 -define(STEP_VETEX_DATA(JobId, WId, Step, Idx), 
@@ -40,7 +41,7 @@
 -define(RSTEP_VETEX_DATA(JobId, WId, Step, RNode, RWId, Idx), 
         ?RSTEP_DIR(JobId, WId, Step, RNode, RWId) ++ "vertex_data_" 
         ++ integer_to_list(Idx)).
--define(RSTEP_MSG_QUEUE(JobId, WId, Step, Idx), 
+-define(RSTEP_MSG_QUEUE(JobId, WId, Step, RNode, RWId, Idx), 
         ?RSTEP_DIR(JobId, WId, Step, RNode, RWId) ++ "msg_queue_"
         ++ integer_to_list(Idx)).
                                                                           

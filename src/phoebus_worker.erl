@@ -11,7 +11,7 @@
 -behaviour(gen_fsm).
 
 %% API
--export([start_link/4]).
+-export([start_link/6]).
 
 %% gen_fsm callbacks
 -export([init/1,          
@@ -29,7 +29,10 @@
 
 
 -record(state, {worker_info, num_workers, part_file,
-                master_info, sub_state, step}).
+                master_info, sub_state, step,
+                num_active, table,
+                algo_fun, combine_fun
+               }).
 
 %%%===================================================================
 %%% API
@@ -44,9 +47,10 @@
 %% @spec start_link() -> {ok, Pid} | ignore | {error, Error}
 %% @end
 %%--------------------------------------------------------------------
-start_link(WorkerInfo, NumWorkers, MInfo, Partition) ->
+start_link(WorkerInfo, NumWorkers, MInfo, Partition, AlgoFun, CombineFun) ->
   gen_fsm:start_link(?MODULE, [WorkerInfo, NumWorkers, 
-                               MInfo, Partition], []).
+                               MInfo, Partition, 
+                               AlgoFun, CombineFun], []).
 
 %%%===================================================================
 %%% gen_fsm callbacks
@@ -65,8 +69,10 @@ start_link(WorkerInfo, NumWorkers, MInfo, Partition) ->
 %%                     {stop, StopReason}
 %% @end
 %%--------------------------------------------------------------------
-init([{JobId, WId} = WorkerInfo, NumWorkers, {MNode, MPid}, Partition]) ->
+init([{JobId, WId} = WorkerInfo, NumWorkers, 
+      {MNode, MPid}, Partition, AlgoFun, CombineFun]) ->
   MMonRef = erlang:monitor(process, MPid),
+  Table = acquire_table(JobId, WId),
   {last_step, LastStep} = worker_store:init(JobId, WId),
   WorkerState = 
     case (LastStep < 0) of
@@ -76,7 +82,8 @@ init([{JobId, WId} = WorkerInfo, NumWorkers, {MNode, MPid}, Partition]) ->
   {ok, WorkerState, 
    #state{master_info = {MNode, MPid, MMonRef}, worker_info = WorkerInfo,
           num_workers = NumWorkers, step = LastStep, sub_state = none,
-          part_file = Partition}, 0}.
+          algo_fun = AlgoFun, combine_fun = CombineFun,
+          table = Table, part_file = Partition}, 0}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -180,12 +187,20 @@ vsplit_phase2(timeout, #state{master_info = {MNode, MPid, _},
 %% ------------------------------------------------------------------------
 
 
+
+%% ------------------------------------------------------------------------
+%% algo START
+%% Description : Execute Algorithm on all nodes
+%% ------------------------------------------------------------------------
 algo(_Event, #state{master_info = {MNode, MPid, _}, 
                     worker_info = {JobId, WId}} = State) ->
   ?DEBUG("Worker In State.. ", [{state, algo}, {job, JobId}, 
                                 {worker, WId}]),
   notify_master({MNode, MPid}, {algo_done, WId, 0}),
   {next_state, await_master, State}.
+%% ------------------------------------------------------------------------
+%% algo DONE
+%% ------------------------------------------------------------------------
 
 post_algo(_Event, #state{master_info = {MNode, MPid, _}, 
                          worker_info = {JobId, WId}} = State) ->
@@ -347,3 +362,10 @@ transfer_files(NumWorkers, {JobId, WId}, Step) ->
 
 notify_master({MNode, MPid}, Notification) ->
   rpc:call(MNode, gen_fsm, send_event, [MPid, Notification]).
+
+
+%% TODO : have to implemnt.. using a table manager..
+acquire_table(JobId, WId) ->
+  Table = list_to_atom("test_table_" ++ integer_to_list(WId)),
+  ets:insert(table_mapping, {{JobId, WId}, Table}), 
+  Table.
