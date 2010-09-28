@@ -47,6 +47,7 @@ init_step_file(Type, JobId, WId, _Mode, Step, Idx) ->
   ok = mkdir_p(?STEP_DIR(JobId, WId, Step)),
   [{_, Table}] = ets:lookup(table_mapping, {JobId, WId}),
   TableName = table_name(Table, Type),
+  ets:insert(worker_registry, {{TableName, sync}, 0}), 
   case dets:info(TableName) of
     undefined -> 
       ?DEBUG("Opening Table...", [{job, JobId}, {worker, WId}, {step, Step}]),
@@ -65,8 +66,11 @@ init_rstep_file(Type, JobId, WId, RNode, RWId, Mode, Step, Idx) ->
 
 sync_table(Table, Type, IsForce) ->
   TName = table_name(Table, Type),
-  case ((dets:info(TName, size) > 1000) or IsForce) of
+  [{_, LastSync}] = ets:lookup(worker_registry, {TName, sync}), 
+  CurrSize = dets:info(TName, size),
+  case (((CurrSize - LastSync) > 1000) or IsForce) of
     true -> 
+      ets:insert(worker_registry, {{TName, sync}, CurrSize}),
       FileName = dets:info(TName, filename),
       dets:close(TName),
       dets:open_file(TName, {file, FileName});
