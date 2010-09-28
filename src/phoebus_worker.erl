@@ -73,6 +73,7 @@ init([{JobId, WId} = WorkerInfo, NumWorkers,
       {MNode, MPid}, Partition, AlgoFun, CombineFun]) ->
   MMonRef = erlang:monitor(process, MPid),
   Table = acquire_table(JobId, WId),
+  register_worker(JobId, WId),
   {last_step, LastStep} = worker_store:init(JobId, WId),
   WorkerState = 
     case (LastStep < 0) of
@@ -279,7 +280,8 @@ state_name(_Event, _From, State) ->
 %%                   {stop, Reason, NewState}
 %% @end
 %%--------------------------------------------------------------------
-handle_event(_Event, StateName, State) ->
+handle_event(sync_table, StateName, #state{table = Table} = State) ->
+  worker_store:sync_table(Table, vertex, false),
   {next_state, StateName, State}.
 
 %%--------------------------------------------------------------------
@@ -336,7 +338,9 @@ handle_info(_Info, StateName, State) ->
 %% @spec terminate(Reason, StateName, State) -> void()
 %% @end
 %%--------------------------------------------------------------------
-terminate(_Reason, _StateName, _State) ->
+terminate(_Reason, _StateName, #state{worker_info = {JobId, WId}}) ->
+  %% TODO : might be a better idea for the master to do this..
+  ets:delete(worker_registry, {JobId, WId}),
   ok.
 
 %%--------------------------------------------------------------------
@@ -356,20 +360,31 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%%===================================================================
 handle_vertices(NumWorkers, {JobId, MyWId}, Vertices, Step, FDs) ->
   lists:foldl(
-    fun({VId, _, _, _, _} = Vertex, OldFDs) ->
-        {Node, WId} = phoebus_utils:vertex_owner(JobId, VId, NumWorkers),
+    fun({VName, _, _, _} = Vertex, OldFDs) ->
+        {Node, WId} = phoebus_utils:vertex_owner(JobId, VName, NumWorkers),
         worker_store:store_vertex(Vertex, {Node, {JobId, MyWId, WId}}, 
                                   Step, OldFDs)
     end, FDs, Vertices).  
 
 transfer_files(NumWorkers, {JobId, WId}, Step) ->
-  lists:foldl(
-    fun(W, Pids) when W =:= WId -> Pids;
-       (OWid, Pids) ->
-        Node = phoebus_utils:map_to_node(JobId, OWid),
-        Pid = worker_store:transfer_files(Node, {JobId, WId, OWid}, Step),
-        [Pid|Pids]
-    end, [], lists:seq(1, NumWorkers)).
+  Refs = 
+    lists:foldl(
+      fun(W, Pids) when W =:= WId -> Pids;
+         (OWid, MRefs) ->
+          Node = phoebus_utils:map_to_node(JobId, OWid),
+          Pid = worker_store:transfer_files(Node, {JobId, WId, OWid}, Step),
+          MRef = erlang:monitor(process, Pid),
+          [MRef|MRefs]
+      end, [], lists:seq(1, NumWorkers)),
+  wait_loop(Refs).
+
+wait_loop([]) -> done;
+wait_loop(Refs) ->
+  receive
+    {'DOWN', MRef, _, _, _} -> 
+      NRefs = lists:delete(MRef, Refs),
+      wait_loop(NRefs)
+  end.
 
 notify_master({MNode, MPid}, Notification) ->
   rpc:call(MNode, gen_fsm, send_event, [MPid, Notification]).
@@ -382,6 +397,7 @@ acquire_table(JobId, WId) ->
   %% MTable = worker_store:table_name(Table, msg),
   ets:insert(table_mapping, {{JobId, WId}, Table}), 
   worker_store:init_step_file(vertex, JobId, WId, [write], 0),
-  %% dets:open_file(MTable, 
-  %%                [{file, step_data(msg, JobId, WId, Step, Idx)}]);
   Table.
+
+register_worker(JobId, WId) ->
+  ets:insert(worker_registry, {{JobId, WId}, self()}).

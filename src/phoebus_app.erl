@@ -35,6 +35,7 @@
 %%--------------------------------------------------------------------
 start(_StartType, _StartArgs) ->
   ets:new(table_mapping, [named_table, public]),
+  ets:new(worker_registry, [named_table, public]),
   case phoebus_sup:start_link() of
     {ok, Pid} ->
       {ok, Pid};

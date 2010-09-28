@@ -182,24 +182,36 @@ trans_loop(LocalFName, ReadFD, WriteFD) ->
     eof ->
       file:close(ReadFD),
       file:delete(LocalFName),
-      WriteFD ! close
+      MRef = erlang:monitor(process, WriteFD),
+      WriteFD ! {close, self()},
+      receive
+        {done, WriteFD} -> done;
+        {'DOWN', MRef, _, _, _} -> done 
+      end
   end.
   
 
 recv_loop({init, Type}, JobId, WId, Mode, Step, Idx) ->
   Table = get_other_worker_table(JobId, WId, Type),
   %% {ok, FD} = init_step_file(Type, JobId, WId, Mode, Step, Idx),
-  recv_loop({Table, <<>>}, JobId, WId, Mode, Step, Idx);
-recv_loop({WriteFD, Buffer}, JobId, WId, Mode, Step, Idx) ->
+  recv_loop({Table, <<>>, 0}, JobId, WId, Mode, Step, Idx);
+recv_loop({WriteFD, Buffer, RCount}, JobId, WId, Mode, Step, Idx) ->
   receive
     {data, Data} -> 
-
       BinLines = re:split(Data, "\n"),
       %% NOTE : Extracted Recs must be [{vId, VRec}]
       {VRecs, Rem} = extract_records(Buffer, BinLines),
       table_insert(WriteFD, VRecs), 
-      recv_loop({WriteFD, Rem}, JobId, WId, Mode, Step, Idx);
-    close -> void
+      NewRCount = RCount + length(VRecs),
+      case RCount > 750 of
+        true -> 
+          [{_, WPid}] = ets:lookup(worker_registry, {JobId, WId}),
+          gen_fsm:send_all_state_event(WPid, sync_table);
+        _ ->
+          void
+      end,
+      recv_loop({WriteFD, Rem, NewRCount}, JobId, WId, Mode, Step, Idx);
+    {close, WPid} -> WPid ! {done, self()}
       %% file:close(WriteFD)
   end.
 
@@ -254,17 +266,17 @@ deserialize_rec(Line) ->
   BSize = size(Line) - 1,
   <<_:BSize/binary, Last/binary>> = Line,
   case Last of
-    <<$\r>> -> deserialize_rec(Line, #vertex{}, [], <<>>, vid);
+    <<$\r>> -> deserialize_rec(Line, #vertex{}, [], <<>>, vname);
     _ -> incomplete
   end.
   
 %% vid \t vname \t vstate \t vval \t [eval \t tvid\t tvname \t].. \r\n
 deserialize_rec(<<$\r, _/binary>>, V, EList, _, _) ->
-  {V#vertex.vertex_id, V#vertex.vertex_name, V#vertex.vertex_value,
+  {V#vertex.vertex_name, V#vertex.vertex_value,
    V#vertex.vertex_state, EList};
-deserialize_rec(<<$\t, Rest/binary>>, V, EList, Buffer, vid) ->
-  VId = list_to_integer(binary_to_list(Buffer)),
-  deserialize_rec(Rest, V#vertex{vertex_id = VId}, EList, <<>>, vname);
+%% deserialize_rec(<<$\t, Rest/binary>>, V, EList, Buffer, vid) ->
+%%   VId = list_to_integer(binary_to_list(Buffer)),
+%%   deserialize_rec(Rest, V#vertex{vertex_id = VId}, EList, <<>>, vname);
 deserialize_rec(<<$\t, Rest/binary>>, V, EList, Buffer, vname) ->
   VName = binary_to_list(Buffer),
   deserialize_rec(Rest, V#vertex{vertex_name = VName}, EList, <<>>, vstate);
@@ -286,9 +298,8 @@ deserialize_rec(<<X, Rest/binary>>, V, EList, Buffer, Token) ->
 
 
 
-serialize_rec({VId, VName, VVal, VState, EList}) ->  
-  lists:concat([integer_to_list(VId), "\t",
-                VName, "\t",
+serialize_rec({VName, VVal, VState, EList}) ->  
+  lists:concat([VName, "\t",
                 atom_to_list(VState), "\t",
                 VVal, "\t", serialize_edge_rec(EList, [])]).
 

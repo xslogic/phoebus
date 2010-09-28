@@ -17,7 +17,7 @@
 
 %% Returns {Node, {JobId, WorkerId}}
 vertex_owner(JobId, VId, NumWorkers) ->  
-  WorkerId = (VId rem NumWorkers) + 1,  
+  WorkerId = (erlang:phash2(VId) rem NumWorkers) + 1,  
   {map_to_node(JobId, WorkerId), WorkerId}.    
 
 %% TODO : This has to be configurable...
