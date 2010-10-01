@@ -26,7 +26,7 @@
          handle_sync_event/4, handle_info/3, terminate/3, code_change/4]).
 
 -record(state, {step = 0, max_steps, vertices = 0, job_id,
-                conf, workers = {[], []}}).
+                conf, workers = {[], []}, algo_sub_state = 0}).
 
 %%%===================================================================
 %%% API
@@ -68,10 +68,25 @@ init([Conf]) ->
   phoebus_source:destroy(SS2),
   JobId = phoebus_utils:job_id(),
   %% NOTE: Workers must be of the form [{Node, wId, wPid, wMonRef, wState}]
+  DefAlgoFun = 
+    fun({VName, VValStr, _VState, EList}, InMsgs) -> 
+        io:format("~n[~p]Recvd msgs : ~p ~n", [VName, InMsgs]),
+        {Msgs, NewVValStr} = 
+          lists:foldl(
+            fun({_EValStr, TVName}, {MsgAcc, ValAcc}) ->
+                {[{TVName, VName}|MsgAcc], ValAcc ++ "_" ++ TVName}
+            end, {[], VValStr}, EList),
+        io:format("[~p]Sending msgs : ~p ~n", [VName, Msgs]),
+        {{VName, NewVValStr, hold, EList}, Msgs}
+    end,
+
+  DefCombineFun = fun(Msg1, Msg2) -> Msg1 ++ "||" ++ Msg2 end,
   Workers = start_workers(JobId, {erlang:node(), self()}, 
                           Partitions, 
-                          proplists:get_value(algo_fun, Conf, none),
-                          proplists:get_value(combine_fun, Conf, none)),
+                          proplists:get_value(algo_fun, 
+                                              Conf, DefAlgoFun),
+                          proplists:get_value(combine_fun, 
+                                              Conf, DefCombineFun)),
   {ok, vsplit_phase1, 
    #state{max_steps = proplists:get_value(max_steps, Conf, 100000),
           job_id = JobId,
@@ -138,11 +153,13 @@ vsplit_phase2({vsplit_phase2_done, WId, _WData},
 %% ------------------------------------------------------------------------
 
 
-algo({algo_done, WId, _WData}, 
-              #state{step = Step, workers = Workers} = State) ->
+algo({algo_done, WId, NumMsgsActive}, 
+              #state{step = Step, workers = Workers, 
+                     algo_sub_state = A} = State) ->
   {NewWorkers, NextState} = 
     update_workers(algo, post_algo, Step, Workers, WId),  
-  {next_state, NextState, State#state{workers = NewWorkers}}.
+  {next_state, NextState, State#state{workers = NewWorkers, 
+                                      algo_sub_state = A + NumMsgsActive}}.
 
 
 post_algo({post_algo_done, WId, _WData}, 
@@ -151,21 +168,28 @@ post_algo({post_algo_done, WId, _WData},
     update_workers(post_algo, check_algo_finish, Step, Workers, WId),    
   case NextState of
     check_algo_finish ->
-      {next_state, check_algo_finish, State#state{workers = NewWorkers}, 0};
+      {next_state, check_algo_finish, 
+       State#state{workers = NewWorkers}, 0};
     _ ->
       {next_state, NextState, State#state{workers = NewWorkers}}
   end.
 
 
 check_algo_finish(timeout, #state{step = Step, max_steps = MaxSteps, 
+                                  algo_sub_state = A,
                                   workers = {Workers, []}} = State) ->
   {NextState, NextStep} = 
     case Step < MaxSteps of
-      true -> {algo, Step + 1};
+      true -> 
+        case A > 0 of
+          true -> {algo, Step + 1};
+          _ -> {store_result, Step}
+        end;
       _ -> {store_result, Step}
     end,
   NewWorkers = notify_workers2(Workers, NextState, NextStep),
   {next_state, NextState, State#state{workers = {NewWorkers, []}, 
+                                      algo_sub_state = 0,
                                       step = NextStep}}.
 
 
