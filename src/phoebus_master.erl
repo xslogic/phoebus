@@ -17,6 +17,7 @@
 -export([init/1, 
          vsplit_phase1/2, 
          vsplit_phase2/2, 
+         vsplit_phase3/2, 
          algo/2,
          post_algo/2,
          check_algo_finish/2,
@@ -69,7 +70,7 @@ init([Conf]) ->
   JobId = phoebus_utils:job_id(),
   %% NOTE: Workers must be of the form [{Node, wId, wPid, wMonRef, wState}]
   DefAlgoFun = 
-    fun({VName, VValStr, _VState, EList}, InMsgs) -> 
+    fun({VName, VValStr, EList}, InMsgs) -> 
         io:format("~n[~p]Recvd msgs : ~p ~n", [VName, InMsgs]),
         {Msgs, NewVValStr} = 
           lists:foldl(
@@ -77,7 +78,7 @@ init([Conf]) ->
                 {[{TVName, VName}|MsgAcc], ValAcc ++ "_" ++ TVName}
             end, {[], VValStr}, EList),
         io:format("[~p]Sending msgs : ~p ~n", [VName, Msgs]),
-        {{VName, NewVValStr, hold, EList}, Msgs}
+        {{VName, NewVValStr, EList}, Msgs, hold}
     end,
 
   DefCombineFun = fun(Msg1, Msg2) -> Msg1 ++ "||" ++ Msg2 end,
@@ -146,12 +147,25 @@ vsplit_phase1({vsplit_phase1_done, WId, Vertices},
 vsplit_phase2({vsplit_phase2_done, WId, _WData}, 
               #state{workers = Workers} = State) ->
   {NewWorkers, NextState} = 
-    update_workers(vsplit_phase2, algo, bla, Workers, WId),  
+    update_workers(vsplit_phase2, vsplit_phase3, bla, Workers, WId),  
   {next_state, NextState, State#state{workers = NewWorkers}}.
 %% ------------------------------------------------------------------------
 %% vsplit_phase2 DONE
 %% ------------------------------------------------------------------------
 
+
+%% ------------------------------------------------------------------------
+%% vsplit_phase3 START
+%% Description : copy vertex data to new dir..
+%% ------------------------------------------------------------------------
+vsplit_phase3({vsplit_phase3_done, WId, _WData}, 
+              #state{workers = Workers} = State) ->
+  {NewWorkers, NextState} = 
+    update_workers(vsplit_phase3, algo, bla, Workers, WId),  
+  {next_state, NextState, State#state{workers = NewWorkers}}.
+%% ------------------------------------------------------------------------
+%% vsplit_phase3 DONE
+%% ------------------------------------------------------------------------
 
 algo({algo_done, WId, NumMsgsActive}, 
               #state{step = Step, workers = Workers, 

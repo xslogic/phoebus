@@ -96,8 +96,7 @@ convert_to_rec(Line) ->
 
 convert_to_rec([$\n | _], #vertex{vertex_id = nil}, _, _, _) -> nil;
 convert_to_rec([$\n | _], V, EList, _, _) ->
-  {V#vertex.vertex_name, V#vertex.vertex_value,
-   V#vertex.vertex_state, EList};
+  {V#vertex.vertex_name, V#vertex.vertex_value, EList};
 convert_to_rec([$\t | Rest], V, EList, Buffer, vname) ->
   VName = lists:reverse(Buffer),
   VId = erlang:phash2(VName, 4294967296),

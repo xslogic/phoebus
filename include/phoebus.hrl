@@ -22,6 +22,9 @@
 -define(STEP_VETEX_DATA(JobId, WId, Step, Idx), 
         ?STEP_DIR(JobId, WId, Step) ++ "vertex_data_" 
         ++ integer_to_list(Idx)).
+-define(STEP_FLAG_DATA(JobId, WId, Step, Idx), 
+        ?STEP_DIR(JobId, WId, Step) ++ "flag_" 
+        ++ integer_to_list(Idx)).
 -define(STEP_MSG_QUEUE(JobId, WId, Step, Idx), 
         ?STEP_DIR(JobId, WId, Step) ++ "msg_queue_"
         ++ integer_to_list(Idx)).

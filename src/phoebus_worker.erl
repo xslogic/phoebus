@@ -17,6 +17,7 @@
 -export([init/1,          
          vsplit_phase1/2, 
          vsplit_phase2/2, 
+         vsplit_phase3/2, 
          algo/2,
          post_algo/2,
          store_result/2, 
@@ -174,13 +175,6 @@ vsplit_phase1({vertices_done, Vertices, RefPid, SS},
 %% ------------------------------------------------------------------------
 %% vsplit_phase1 DONE
 %% ------------------------------------------------------------------------
-
-
-
-%% ------------------------------------------------------------------------
-%% vsplit_phase2 START
-%% Description : Transfer Partition data to other workers
-%% ------------------------------------------------------------------------
 vsplit_phase2(timeout, #state{master_info = {MNode, MPid, _}, 
                               worker_info = {_JobId, WId} = WInfo, 
                               num_workers = NumWorkers,
@@ -188,10 +182,25 @@ vsplit_phase2(timeout, #state{master_info = {MNode, MPid, _},
   ?DEBUG("Worker In State.. ", [{state, vsplit_phase2}, {worker, WId}]),
   transfer_files(NumWorkers, WInfo, 0),
   notify_master({MNode, MPid}, {vsplit_phase2_done, WId, 0}),
+  {next_state, await_master, State#state{sub_state = none}, 
+   ?MASTER_TIMEOUT()}.
+
+
+%% ------------------------------------------------------------------------
+%% vsplit_phase3 START
+%% Description : Load active workers in flag table 
+%% (Can possibly get rid of this step.. refactor..)
+%% ------------------------------------------------------------------------
+vsplit_phase3(timeout, #state{master_info = {MNode, MPid, _}, 
+                              worker_info = {JobId, WId}, 
+                              sub_state = none} = State) ->
+  ?DEBUG("Worker In State.. ", [{state, vsplit_phase3}, {worker, WId}]),
+  worker_store:load_active_vertices(JobId, WId),
+  notify_master({MNode, MPid}, {vsplit_phase3_done, WId, 0}),
   {next_state, await_master, 
    State#state{sub_state = {step_to_be_committed, 0}}, ?MASTER_TIMEOUT()}.
 %% ------------------------------------------------------------------------
-%% vsplit_phase2 DONE
+%% vsplit_phase3 DONE
 %% ------------------------------------------------------------------------
 
 
@@ -200,7 +209,7 @@ vsplit_phase2(timeout, #state{master_info = {MNode, MPid, _},
 %% algo START
 %% Description : Execute Algorithm on all nodes
 %% ------------------------------------------------------------------------
-algo(_Event, #state{master_info = {MNode, MPid, _}, 
+algo(timeout, #state{master_info = {MNode, MPid, _}, 
                     worker_info = {JobId, WId},
                     step = OldStep,
                     algo_fun = AlgoFun,
@@ -213,11 +222,12 @@ algo(_Event, #state{master_info = {MNode, MPid, _},
                                 {worker, WId}]),
   %% Feed previous step data into Compute fun
   %% Store new stuff in current step file..
-  {ok, PrevVTable} =
-    worker_store:init_step_file(vertex, JobId, WId, [read], OldStep), 
-  NumActive = get_num_active(PrevVTable),
+  {ok, PrevFTable} =
+    worker_store:init_step_file(flag, JobId, WId, [read], OldStep), 
+  NumActive = get_num_active(PrevFTable),
   {ok, PrevMTable} = 
     worker_store:init_step_file(msg, JobId, WId, [read], OldStep),
+
   worker_store:init_step_file(vertex, JobId, WId, [write], NewStep),
   worker_store:init_step_file(msg, JobId, WId, [write], NewStep),
   NumMessages = 
@@ -233,20 +243,29 @@ algo(_Event, #state{master_info = {MNode, MPid, _},
     _ -> 
       run_algo(JobId, WId, {vertex, Table}, AlgoFun, CombineFun, NewStep)
   end,  
-  dets:close(PrevVTable),
-  dets:close(PrevMTable),
   notify_master({MNode, MPid}, {algo_done, WId, (NumMessages + NumActive)}),
   {next_state, await_master, State#state{step = NewStep}}.
 %% ------------------------------------------------------------------------
 %% algo DONE
 %% ------------------------------------------------------------------------
 
-post_algo(_Event, #state{master_info = {MNode, MPid, _}, 
-                         worker_info = {JobId, WId}} = State) ->
+
+%% ------------------------------------------------------------------------
+%% post_algo START
+%% Description : wait for master.. and then commit the step..
+%% ------------------------------------------------------------------------
+post_algo(timeout, #state{master_info = {MNode, MPid, _}, 
+                          step = Step,
+                          worker_info = {JobId, WId}} = State) ->
   ?DEBUG("Worker In State.. ", [{state, post_algo}, {job, JobId}, 
                                 {worker, WId}]),
   notify_master({MNode, MPid}, {post_algo_done, WId, 0}),
-  {next_state, await_master, State}.
+  {next_state, await_master, 
+   State#state{sub_state = {step_to_be_committed, Step}}, 
+   ?MASTER_TIMEOUT()}.
+%% ------------------------------------------------------------------------
+%% post_algo DONE
+%% ------------------------------------------------------------------------
 
 store_result(_Event, State) ->
   {next_state, await_master, State}.
@@ -398,7 +417,7 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%%===================================================================
 handle_vertices(NumWorkers, {JobId, MyWId}, Vertices, Step, FDs) ->
   lists:foldl(
-    fun({VName, _, _, _} = Vertex, OldFDs) ->
+    fun({VName, _, _} = Vertex, OldFDs) ->
         {Node, WId} = phoebus_utils:vertex_owner(JobId, VName, NumWorkers),
         worker_store:store_vertex(Vertex, {Node, {JobId, MyWId, WId}}, 
                                   Step, OldFDs)
@@ -435,6 +454,7 @@ acquire_table(JobId, WId) ->
   %% MTable = worker_store:table_name(Table, msg),
   ets:insert(table_mapping, {{JobId, WId}, Table}), 
   worker_store:init_step_file(vertex, JobId, WId, [write], 0),
+  worker_store:init_step_file(flag, JobId, WId, [write], 0),
   worker_store:init_step_file(msg, JobId, WId, [write], 0),
   Table.
 
@@ -442,76 +462,86 @@ register_worker(JobId, WId) ->
   ets:insert(worker_registry, {{JobId, WId}, self()}).
 
 run_algo(JobId, _WId, {IterType, Table}, AlgoFun, CombineFun, Step) ->
-  PrevVTable = worker_store:table_name(Table, vertex, Step - 1),
+  PrevFTable = worker_store:table_name(Table, flag, Step - 1),
   PrevMTable = worker_store:table_name(Table, msg, Step - 1),
-  CurrVTable = worker_store:table_name(Table, vertex, Step),
+  CurrFTable = worker_store:table_name(Table, flag, Step - 1),
   CurrMTable = worker_store:table_name(Table, msg, Step),
-  algo_loop(JobId, PrevVTable, PrevMTable, CurrVTable, CurrMTable, 
+  VTable = worker_store:table_name(Table, vertex, Step),
+  algo_loop(JobId, VTable, PrevFTable, PrevMTable, 
+            CurrFTable, CurrMTable, 
             AlgoFun, CombineFun, {IterType, start}).
 
-algo_loop(JobId, PrevVTable, PrevMTable, CurrVTable, CurrMTable, 
+algo_loop(JobId, VTable, PrevFTable, PrevMTable, 
+          CurrFTable, CurrMTable, 
           AlgoFun, CombineFun, {vertex, start}) ->
-  case dets:select(PrevVTable, 
-                   [{{'_', '_', active, '_'}, [], ['$_']}], 5) of
+  case dets:select(PrevFTable, [{{'$1', active}, [], ['$_']}], 5) of
     {Sel, Cont} ->
-      iterate_vertex(JobId, Sel, PrevMTable, CurrVTable, CurrMTable, 
-                     AlgoFun, CombineFun),
-      algo_loop(JobId, PrevVTable, PrevMTable, CurrVTable, CurrMTable,
-                AlgoFun, CombineFun, {vertex, Cont});
+      iterate_vertex(JobId, Sel, VTable, PrevMTable, 
+               CurrFTable, CurrMTable, AlgoFun, CombineFun),
+      algo_loop(JobId, VTable, PrevFTable, PrevMTable, CurrFTable, 
+                CurrMTable, AlgoFun, 
+                CombineFun, {vertex, Cont});
     '$end_of_table' ->
-      algo_loop(JobId, PrevVTable, PrevMTable, CurrVTable, CurrMTable,
-                AlgoFun, CombineFun, {msg, start})
+      algo_loop(JobId, VTable, PrevFTable, PrevMTable, CurrFTable, 
+                CurrMTable, AlgoFun, CombineFun, {msg, start})
   end;
-algo_loop(JobId, PrevVTable, PrevMTable, CurrVTable, CurrMTable, 
+algo_loop(JobId, VTable, PrevFTable, PrevMTable, 
+          CurrFTable, CurrMTable, 
           AlgoFun, CombineFun, {vertex, Cont}) ->
   case dets:select(Cont) of
     {Sel, Cont2} ->
-      iterate_vertex(JobId, Sel, PrevMTable, CurrVTable, CurrMTable, 
-                     AlgoFun, CombineFun),
-      algo_loop(JobId, PrevVTable, PrevMTable, CurrVTable, CurrMTable,
-                AlgoFun, CombineFun, {vertex, Cont2});
+      iterate_vertex(JobId, Sel, VTable, PrevMTable, 
+               CurrFTable, CurrMTable, AlgoFun, CombineFun),
+      algo_loop(JobId, VTable, PrevFTable, PrevMTable, CurrFTable, 
+                CurrMTable, AlgoFun, CombineFun, {vertex, Cont2});
     '$end_of_table' ->
-      algo_loop(JobId, PrevVTable, PrevMTable, CurrVTable, CurrMTable,
-                AlgoFun, CombineFun, {msg, start})
+      algo_loop(JobId, VTable, PrevFTable, PrevMTable, CurrFTable, 
+                CurrMTable, AlgoFun, 
+                CombineFun, {msg, start})
   end;
-algo_loop(JobId, PrevVTable, PrevMTable, CurrVTable, CurrMTable, 
+algo_loop(JobId, VTable, PrevFTable, PrevMTable, 
+          CurrFTable, CurrMTable, 
           AlgoFun, CombineFun, {msg, start}) ->
-  iterate_msg(JobId, dets:first(PrevMTable), PrevVTable, 
-              PrevMTable, CurrVTable, CurrMTable, AlgoFun, CombineFun).
+  iterate_msg(JobId, dets:first(PrevMTable), VTable, PrevFTable,  
+              PrevMTable, CurrFTable, CurrMTable, AlgoFun, CombineFun).
       
-iterate_msg(_, '$end_of_table', _, _, _, _, _, _) -> void;
-iterate_msg(JobId, K, PrevVTable, PrevMTable, CurrVTable, CurrMTable, 
-            AlgoFun, CombineFun) ->
-  case dets:lookup(CurrVTable, K) of
+iterate_msg(_, '$end_of_table', _, _, _, _, _, _, _) -> void;
+iterate_msg(JobId, K, VTable, PrevFTable, PrevMTable, 
+          CurrFTable, CurrMTable, AlgoFun, CombineFun) ->
+  case dets:lookup(CurrFTable, K) of
     [] ->
       case dets:lookup(PrevMTable, K) of
         [{_, M}|Rest] ->
           InMsg = 
             lists:foldl(fun({_, Msg}, Acc) -> CombineFun(Msg, Acc) end,
               M, Rest),
-          case dets:lookup(PrevVTable, K) of
-            [OldVInfo] ->
-              {NewV, OutMsgs} = AlgoFun(OldVInfo, [InMsg]),
-              dets:insert(CurrVTable, NewV),
+          case dets:lookup(VTable, K) of
+            [{VName, _, _} = OldVInfo] ->
+              {NewV, OutMsgs, VState} = AlgoFun(OldVInfo, [InMsg]),
+              dets:insert(CurrFTable, {VName, VState}),
+              dets:insert(VTable, NewV),
               %% TODO Find out which worker these messages 
               %% are meant for first..
               dets:insert(CurrMTable, OutMsgs);
             [] -> 
               %% New vertex created...
-              dets:insert(CurrVTable, {K, "new", active, []})
+              dets:insert(VTable, {K, "new", []}),
+              dets:insert(CurrFTable, {K, active})                
           end;
         _ -> void
       end;
     _ -> void
   end,
-  iterate_msg(JobId, dets:next(PrevMTable, K), PrevVTable, 
-              PrevMTable, CurrVTable, CurrMTable, AlgoFun, CombineFun).
+  iterate_msg(JobId, dets:next(PrevMTable, K), VTable, PrevFTable, 
+              PrevMTable, CurrFTable, CurrMTable, 
+              AlgoFun, CombineFun).
 
                                           
-iterate_vertex(_JobId, Sel, PrevMTable, CurrVTable, CurrMTable, 
-               AlgoFun, CombineFun) ->
+iterate_vertex(_JobId, Sel, VTable, PrevMTable, 
+               CurrFTable, CurrMTable, AlgoFun, CombineFun) ->
   lists:foreach(
-    fun({VName, _, _, _} = OldVInfo) ->
+    fun({VName, _}) ->
+        [OldVInfo] = dets:lookup(VTable, VName),
         InMsg = 
           case dets:lookup(PrevMTable, VName) of
             [] -> [];
@@ -520,12 +550,12 @@ iterate_vertex(_JobId, Sel, PrevMTable, CurrVTable, CurrMTable,
                 fun({_, Msg}, Acc) -> CombineFun(Msg, Acc) end,
                 M, Rest)
           end,
-        {NewV, OutMsgs} = AlgoFun(OldVInfo, [InMsg]),
-        dets:insert(CurrVTable, NewV),
+        {NewV, OutMsgs, VState} = AlgoFun(OldVInfo, [InMsg]),
+        dets:insert(CurrFTable, {VName, VState}),
+        dets:insert(VTable, NewV),
         %% TODO Find out which worker these messages are meant for first..
         dets:insert(CurrMTable, OutMsgs)
     end, Sel).
             
 get_num_active(TName) ->
-  Lst = dets:select(TName, [{{'$1', '_', active, '_'}, [], ['$$']}]),
-  length(Lst).
+  length(dets:select(TName, [{{'$1', active}, [], ['$$']}])).

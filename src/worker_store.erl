@@ -15,8 +15,8 @@
          sync_table/4, close_step_file/1, 
          transfer_files/3,
          create_receiver/6,
-         deserialize_rec/1,
-         load_data/3,
+         deserialize_rec/2,
+         load_active_vertices/2,
          table_name/3,
          commit_step/3]).
 
@@ -54,6 +54,9 @@ init_step_file(Type, JobId, WId, _Mode, Step, Idx) ->
       ?DEBUG("Opening Table...", 
              [{job, JobId}, {worker, WId}, {step, Step}]),
       case Type of
+        flag ->
+          dets:open_file(TableName, 
+                         [{file, step_data(Type, JobId, WId, Step, Idx)}]);
         vertex ->
           dets:open_file(TableName, 
                          [{file, step_data(Type, JobId, WId, Step, Idx)}]);
@@ -98,17 +101,29 @@ commit_step(JobId, WId, Step) ->
   file:close(FD),
   [{_, Table}] = ets:lookup(table_mapping, {JobId, WId}),
   dets:close(table_name(Table, vertex, Step)),
+  dets:close(table_name(Table, flag, Step)),
   dets:close(table_name(Table, msg, Step)),
-  ok = mkdir_p(?STEP_DIR(JobId, WId, Step + 1)).
+  ok = mkdir_p(?STEP_DIR(JobId, WId, Step + 1)),
+  OldDFile = step_data(vertex, JobId, WId, Step, Step),
+  NewDFile = step_data(vertex, JobId, WId, Step + 1, Step + 1),
+  os:cmd("cp " ++ OldDFile ++ " " ++ NewDFile).
 
 
-load_data(JobId, WId, Step) ->  
-  copy_step_file(JobId, WId, Step, vertex),
-  copy_step_file(JobId, WId, Step, msg).  
+load_active_vertices(JobId, WId) ->  
+  [{_, Table}] = ets:lookup(table_mapping, {JobId, WId}),
+  ActiveVerts = 
+    dets:select(table_name(Table, vertex, 0),
+               [{{'$1', '_', '_'}, [], ['$$']}]),
+  lists:foreach(
+    fun([V]) -> dets:insert(table_name(Table, flag, 0), {V, active}) end,
+    ActiveVerts).
+  %% copy_step_file(JobId, WId, Step, vertex),
+  %% copy_step_file(JobId, WId, Step, msg).  
   
 
 
-store_vertex(Vertex, {_, {JobId, MyWId, WId}}, Step, FDs) when WId =:= MyWId->
+store_vertex(Vertex, {_, {JobId, MyWId, WId}}, Step, FDs) 
+  when WId =:= MyWId->
   {Table, Buffer} = 
     case proplists:get_value(MyWId, FDs) of
       undefined -> 
@@ -128,7 +143,7 @@ store_vertex(Vertex, {Node, {JobId, MyWId, WId}}, Step, FDs) ->
         end,
       store_vertex_helper(Table, Buffer, Vertex, WId, FDs);
     _ ->        
-      VRec = serialize_rec(Vertex),
+      VRec = serialize_rec(vertex, Vertex),
       {ok, FD} = 
         case proplists:get_value(WId, FDs) of
           undefined -> 
@@ -197,6 +212,7 @@ trans_loop(LocalFName, ReadFD, WriteFD) ->
       WriteFD ! {close, self()},
       receive
         {done, WriteFD} -> done;
+        %% TODO : Handle this...
         {'DOWN', MRef, _, _, _} -> done 
       end
   end.
@@ -205,13 +221,13 @@ trans_loop(LocalFName, ReadFD, WriteFD) ->
 recv_loop({init, Type}, JobId, WId, Mode, Step, Idx) ->
   Table = get_other_worker_table(JobId, WId, Type, Step),
   %% {ok, FD} = init_step_file(Type, JobId, WId, Mode, Step, Idx),
-  recv_loop({Table, <<>>, 0}, JobId, WId, Mode, Step, Idx);
-recv_loop({WriteFD, Buffer, RCount}, JobId, WId, Mode, Step, Idx) ->
+  recv_loop({Type, Table, <<>>, 0}, JobId, WId, Mode, Step, Idx);
+recv_loop({Type, WriteFD, Buffer, RCount}, JobId, WId, Mode, Step, Idx) ->
   receive
     {data, Data} -> 
       BinLines = re:split(Data, "\n"),
       %% NOTE : Extracted Recs must be [{vId, VRec}]
-      {VRecs, Rem} = extract_records(Buffer, BinLines),
+      {VRecs, Rem} = extract_records(Type, Buffer, BinLines),
       table_insert(WriteFD, VRecs), 
       NewRCount = RCount + length(VRecs),
       case RCount > 750 of
@@ -221,7 +237,8 @@ recv_loop({WriteFD, Buffer, RCount}, JobId, WId, Mode, Step, Idx) ->
         _ ->
           void
       end,
-      recv_loop({WriteFD, Rem, NewRCount}, JobId, WId, Mode, Step, Idx);
+      recv_loop({Type, WriteFD, Rem, NewRCount}, JobId, WId, Mode, 
+                Step, Idx);
     {close, WPid} -> WPid ! {done, self()}
       %% file:close(WriteFD)
   end.
@@ -261,11 +278,11 @@ get_other_worker_table(JobId, OWId, Type, Step) ->
     end,
   table_name(Table, Type, Step).
 
-extract_records(Buffer, BinLines) ->
+extract_records(Type, Buffer, BinLines) ->
   lists:foldl(
     fun(BinLine, {AccRecs, Buff}) ->
         L = <<Buff/binary, BinLine/binary>>,
-        case deserialize_rec(L) of
+        case deserialize_rec(Type, L) of
           null -> {AccRecs, <<>>};
           incomplete -> {AccRecs, L};
           Rec -> {[Rec|AccRecs], <<>>}
@@ -273,53 +290,70 @@ extract_records(Buffer, BinLines) ->
     end, {[], Buffer}, BinLines).
   
 
-deserialize_rec(<<>>) -> null;
-deserialize_rec(Line) ->
+deserialize_rec(vertex, <<>>) -> null;
+deserialize_rec(vertex, Line) ->
   BSize = size(Line) - 1,
   <<_:BSize/binary, Last/binary>> = Line,
   case Last of
-    <<$\r>> -> deserialize_rec(Line, #vertex{}, [], <<>>, vname);
+    <<$\r>> -> deserialize_rec(vertex, Line, #vertex{}, [], <<>>, vname);
+    _ -> incomplete
+  end;
+deserialize_rec(msg, <<>>) -> null;
+deserialize_rec(msg, Line) ->
+  BSize = size(Line) - 1,
+  <<_:BSize/binary, Last/binary>> = Line,
+  case Last of
+    <<$\r>> -> deserialize_rec(msg, Line, {null, null}, [], <<>>, vname);
     _ -> incomplete
   end.
   
 %% vid \t vname \t vstate \t vval \t [eval \t tvid\t tvname \t].. \r\n
-deserialize_rec(<<$\r, _/binary>>, V, EList, _, _) ->
-  {V#vertex.vertex_name, V#vertex.vertex_value,
-   V#vertex.vertex_state, EList};
-%% deserialize_rec(<<$\t, Rest/binary>>, V, EList, Buffer, vid) ->
-%%   VId = list_to_integer(binary_to_list(Buffer)),
-%%   deserialize_rec(Rest, V#vertex{vertex_id = VId}, EList, <<>>, vname);
-deserialize_rec(<<$\t, Rest/binary>>, V, EList, Buffer, vname) ->
+deserialize_rec(vertex, <<$\r, _/binary>>, V, EList, _, _) ->
+  {V#vertex.vertex_name, V#vertex.vertex_value, EList};
+deserialize_rec(vertex, <<$\t, Rest/binary>>, V, EList, Buffer, vname) ->
   VName = binary_to_list(Buffer),
-  deserialize_rec(Rest, V#vertex{vertex_name = VName}, EList, <<>>, vstate);
-deserialize_rec(<<$\t, Rest/binary>>, V, EList, Buffer, vstate) ->
-  VState = list_to_atom(binary_to_list(Buffer)),
-  deserialize_rec(Rest, V#vertex{vertex_state = VState}, EList, <<>>, vval);
-deserialize_rec(<<$\t, Rest/binary>>, V, EList, Buffer, vval) ->
+  deserialize_rec(vertex, Rest, V#vertex{vertex_name = VName}, 
+                  EList, <<>>, vval);
+deserialize_rec(vertex, <<$\t, Rest/binary>>, V, EList, Buffer, vval) ->
   VVal = binary_to_list(Buffer),
-  deserialize_rec(Rest, V#vertex{vertex_value = VVal}, EList, <<>>, eval);
-deserialize_rec(<<$\t, Rest/binary>>, V, EList, Buffer, eval) ->
-  deserialize_rec(Rest, V, EList, <<>>, {tvname, binary_to_list(Buffer)});
-deserialize_rec(<<$\t, Rest/binary>>, V, EList, Buffer, {tvname, EVal}) ->
-  deserialize_rec(Rest, V, [{EVal, binary_to_list(Buffer)}|EList], <<>>, 
-                  eval);
-deserialize_rec(<<X, Rest/binary>>, V, EList, Buffer, Token) ->
-  deserialize_rec(Rest, V, EList, <<Buffer/binary, X>>, Token).  
+  deserialize_rec(vertex, Rest, V#vertex{vertex_value = VVal}, 
+                  EList, <<>>, eval);
+deserialize_rec(vertex, <<$\t, Rest/binary>>, V, EList, Buffer, eval) ->
+  deserialize_rec(vertex, Rest, V, EList, <<>>, 
+                  {tvname, binary_to_list(Buffer)});
+deserialize_rec(vertex, <<$\t, Rest/binary>>, V, EList, 
+                Buffer, {tvname, EVal}) ->
+  deserialize_rec(vertex, Rest, V, [{EVal, binary_to_list(Buffer)}|EList], 
+                  <<>>, eval);
+deserialize_rec(vertex, <<X, Rest/binary>>, V, EList, Buffer, Token) ->
+  deserialize_rec(vertex, Rest, V, EList, <<Buffer/binary, X>>, Token);
+
+deserialize_rec(msg, <<$\r, _/binary>>, Msg, _, _, _) -> Msg;
+deserialize_rec(msg, <<$\t, Rest/binary>>, {_, _}, L, Buffer, vname) ->
+  VName = binary_to_list(Buffer),
+  deserialize_rec(msg, Rest, {VName, 0}, L, <<>>, vmsg);
+deserialize_rec(msg, <<$\t, Rest/binary>>, {VN, L}, L, Buffer, vmsg) ->
+  Msg = binary_to_list(Buffer),
+  deserialize_rec(msg, Rest, {VN, [Msg|L]}, L, <<>>, vmsg);
+deserialize_rec(msg, <<X, Rest/binary>>, V, L, Buffer, Token) ->
+  deserialize_rec(msg, Rest, V, L, <<Buffer/binary, X>>, Token).
 
 
 
-
-
-serialize_rec({VName, VVal, VState, EList}) ->  
+serialize_rec(vertex, {VName, VVal, EList}) ->  
   lists:concat([VName, "\t",
-                atom_to_list(VState), "\t",
-                VVal, "\t", serialize_edge_rec(EList, [])]).
+                VVal, "\t", serialize_edge_rec(EList, [])]);
+serialize_rec(msg, {VName, Msgs}) ->
+  VName ++ "\t" ++ serialize_msgs(Msgs) ++ "\r\n".
 
 serialize_edge_rec([], Done) ->
   Done ++ "\r\n";
 serialize_edge_rec([{EVal, VName}|Rest], Done) ->
   serialize_edge_rec(Rest, 
                      lists:concat([EVal, "\t", VName, "\t", Done])).
+
+serialize_msgs(Msgs) ->
+  lists:concat([M ++ "\t" || M <- Msgs]).
   
 mkdir_p(Loc) ->
   {_, FinalRetVal} = 
@@ -357,7 +391,10 @@ file_type(F) ->
 step_data(vertex, JobId, WId, Step, Idx) ->
         ?STEP_VETEX_DATA(JobId, WId, Step, Idx);
 step_data(msg, JobId, WId, Step, Idx) ->
-        ?STEP_MSG_QUEUE(JobId, WId, Step, Idx).
+        ?STEP_MSG_QUEUE(JobId, WId, Step, Idx);
+step_data(flag, JobId, WId, Step, Idx) ->
+        ?STEP_FLAG_DATA(JobId, WId, Step, Idx).
+
 
 rstep_data(vertex, JobId, WId, Step, RNode, RWId, Idx) ->
         ?RSTEP_VETEX_DATA(JobId, WId, Step, RNode, RWId, Idx);
@@ -389,14 +426,14 @@ table_insert(Table, X, Counter) ->
       table_insert(Table, X)
   end.
       
-copy_step_file(JobId, WId, Step, Type) ->
-  [{_, Table}] = ets:lookup(table_mapping, {JobId, WId}),
-  TName = table_name(Table, Type, Step),
-  TFileName = dets:info(TName, filename),
-  NewTFileName = step_data(Type, JobId, WId, Step + 1, 0),
-  dets:close(TName),
-  os:cmd("cp " ++ TFileName ++ " " ++ NewTFileName),
-  dets:open_file(TName, [{file, NewTFileName}]).
+%% copy_step_file(JobId, WId, Step, Type) ->
+%%   [{_, Table}] = ets:lookup(table_mapping, {JobId, WId}),
+%%   TName = table_name(Table, Type, Step),
+%%   TFileName = dets:info(TName, filename),
+%%   NewTFileName = step_data(Type, JobId, WId, Step + 1, 0),
+%%   dets:close(TName),
+%%   os:cmd("cp " ++ TFileName ++ " " ++ NewTFileName),
+%%   dets:open_file(TName, [{file, NewTFileName}]).
 
 store_vertex_helper(Table, Buffer, Vertex, WId, FDs) ->
   NewBuffer = 
