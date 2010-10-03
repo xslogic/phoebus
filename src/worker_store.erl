@@ -18,6 +18,7 @@
          deserialize_rec/2,
          load_active_vertices/2,
          table_name/3,
+         serialize_rec/2,
          commit_step/3]).
 
 %%%===================================================================
@@ -301,9 +302,10 @@ deserialize_rec(vertex, Line) ->
 deserialize_rec(msg, <<>>) -> null;
 deserialize_rec(msg, Line) ->
   BSize = size(Line) - 1,
-  <<_:BSize/binary, Last/binary>> = Line,
+  <<Rest:BSize/binary, Last/binary>> = Line,
   case Last of
     <<$\r>> -> deserialize_rec(msg, Line, {null, null}, [], <<>>, vname);
+    <<$\n>> -> deserialize_rec(msg, <<Rest/binary, $\r>>);
     _ -> incomplete
   end.
   
@@ -331,7 +333,7 @@ deserialize_rec(vertex, <<X, Rest/binary>>, V, EList, Buffer, Token) ->
 deserialize_rec(msg, <<$\r, _/binary>>, Msg, _, _, _) -> Msg;
 deserialize_rec(msg, <<$\t, Rest/binary>>, {_, _}, L, Buffer, vname) ->
   VName = binary_to_list(Buffer),
-  deserialize_rec(msg, Rest, {VName, 0}, L, <<>>, vmsg);
+  deserialize_rec(msg, Rest, {VName, []}, L, <<>>, vmsg);
 deserialize_rec(msg, <<$\t, Rest/binary>>, {VN, L}, L, Buffer, vmsg) ->
   Msg = binary_to_list(Buffer),
   deserialize_rec(msg, Rest, {VN, [Msg|L]}, L, <<>>, vmsg);
