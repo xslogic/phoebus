@@ -72,16 +72,19 @@ init([Conf]) ->
   DefAlgoFun = 
     fun({VName, VValStr, EList}, InMsgs) -> 
         io:format("~n[~p]Recvd msgs : ~p ~n", [VName, InMsgs]),
-        {Msgs, NewVValStr} = 
+        ToGo = 
+          lists:foldl(fun(M, Acc) -> Acc ++ "||" ++ M end, 
+                      VValStr, InMsgs),
+        Msgs = 
           lists:foldl(
-            fun({_EValStr, TVName}, {MsgAcc, ValAcc}) ->
-                {[{TVName, VName}|MsgAcc], ValAcc ++ "_" ++ TVName}
-            end, {[], VValStr}, EList),
+            fun({_EValStr, TVName}, MsgAcc) ->
+                [{TVName, ToGo}|MsgAcc]
+            end, [], EList),
         io:format("[~p]Sending msgs : ~p ~n", [VName, Msgs]),
-        {{VName, NewVValStr, EList}, Msgs, hold}
+        {{VName, ToGo, EList}, Msgs, hold}
     end,
-
-  DefCombineFun = fun(Msg1, Msg2) -> Msg1 ++ "||" ++ Msg2 end,
+  DefCombineFun = none,
+  %% DefCombineFun = fun(Msg1, Msg2) -> Msg1 ++ "||" ++ Msg2 end,
   Workers = start_workers(JobId, {erlang:node(), self()}, 
                           Partitions, 
                           proplists:get_value(algo_fun, 

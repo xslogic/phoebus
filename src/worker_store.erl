@@ -12,12 +12,13 @@
 %% API
 -export([purge/0, init/2, store_vertex/4, 
          init_step_file/5, init_step_file/6, 
-         sync_table/4, close_step_file/1, 
+         sync_table/4, close_step_file/2, 
          transfer_files/3,
          create_receiver/6,
          deserialize_rec/2,
          load_active_vertices/2,
          table_name/3,
+         mkdir_p/1,
          serialize_rec/2,
          commit_step/3]).
 
@@ -70,12 +71,12 @@ init_step_file(Type, JobId, WId, _Mode, Step, Idx) ->
   end.
         
 
-init_rstep_file(Type, JobId, WId, RNode, RWId, Mode, Step) ->
-  init_rstep_file(Type, JobId, WId, RNode, RWId, Mode, Step, Step).
+init_rstep_file(Type, JobId, WId, RWId, Mode, Step) ->
+  init_rstep_file(Type, JobId, WId, RWId, Mode, Step, Step).
 
-init_rstep_file(Type, JobId, WId, RNode, RWId, Mode, Step, Idx) -> 
-  ok = mkdir_p(?RSTEP_DIR(JobId, WId, Step, RNode, RWId)),
-  file:open(rstep_data(Type, JobId, WId, Step, RNode, RWId, Idx), Mode).
+init_rstep_file(Type, JobId, WId, RWId, Mode, Step, Idx) -> 
+  ok = mkdir_p(?RSTEP_DIR(JobId, WId, Step, RWId)),
+  file:open(rstep_data(Type, JobId, WId, Step, RWId, Idx), Mode).
 
 sync_table(Table, Type, Step, IsForce) ->
   TName = table_name(Table, Type, Step),
@@ -90,10 +91,10 @@ sync_table(Table, Type, Step, IsForce) ->
     _ -> ok
   end.      
 
-close_step_file({_, []}) -> void;
-close_step_file({Table, Buffer}) -> 
-  table_insert(Table, Buffer);
-close_step_file(FD) ->
+close_step_file(_, {_, []}) -> void;
+close_step_file(Type, {Table, Buffer}) -> 
+  table_insert(Type, Table, Buffer);
+close_step_file(_, FD) ->
   file:close(FD).
 
 commit_step(JobId, WId, Step) ->
@@ -148,7 +149,7 @@ store_vertex(Vertex, {Node, {JobId, MyWId, WId}}, Step, FDs) ->
       {ok, FD} = 
         case proplists:get_value(WId, FDs) of
           undefined -> 
-            init_rstep_file(vertex, JobId, MyWId, Node, WId, [write], Step);
+            init_rstep_file(vertex, JobId, MyWId, WId, [write], Step);
           OldFD -> {ok, OldFD}
         end,
       file:write(FD, VRec),
@@ -178,7 +179,7 @@ create_receiver(Type, JobId, WId, Mode, Step, Idx) ->
 %%% Internal functions
 %%%===================================================================
 transfer_loop(init, _MyPid, Node, {JobId, WId, OWid}, Step) ->
-  Dir = ?RSTEP_DIR(JobId, WId, Step, Node, OWid),
+  Dir = ?RSTEP_DIR(JobId, WId, Step, OWid),
   case file:list_dir(Dir) of
     {ok, FList} ->
       lists:foreach(
@@ -228,8 +229,8 @@ recv_loop({Type, WriteFD, Buffer, RCount}, JobId, WId, Mode, Step, Idx) ->
     {data, Data} -> 
       BinLines = re:split(Data, "\n"),
       %% NOTE : Extracted Recs must be [{vId, VRec}]
-      {VRecs, Rem} = extract_records(Type, Buffer, BinLines),
-      table_insert(WriteFD, VRecs), 
+      {VRecs, Rem} = extract_records(Type, Buffer, BinLines),      
+      table_insert(Type, WriteFD, VRecs), 
       NewRCount = RCount + length(VRecs),
       case RCount > 750 of
         true -> 
@@ -270,7 +271,7 @@ wait_table_loop(Type, JobId, OWid, Pid, Step, Counter) ->
 
 get_other_worker_table(JobId, OWId, Type, Step) ->
   Pid = self(),
-  spawn(fun() -> wait_table_loop(Type, JobId, OWId, Step, Pid, 30) end),
+  spawn(fun() -> wait_table_loop(Type, JobId, OWId, Pid, Step, 30) end),
   Table = 
     receive
       {table, T} -> T;
@@ -398,10 +399,10 @@ step_data(flag, JobId, WId, Step, Idx) ->
         ?STEP_FLAG_DATA(JobId, WId, Step, Idx).
 
 
-rstep_data(vertex, JobId, WId, Step, RNode, RWId, Idx) ->
-        ?RSTEP_VETEX_DATA(JobId, WId, Step, RNode, RWId, Idx);
-rstep_data(msg, JobId, WId, Step, RNode, RWId, Idx) ->
-        ?RSTEP_MSG_QUEUE(JobId, WId, Step, RNode, RWId, Idx).
+rstep_data(vertex, JobId, WId, Step, RWId, Idx) ->
+        ?RSTEP_VETEX_DATA(JobId, WId, Step, RWId, Idx);
+rstep_data(msg, JobId, WId, Step, RWId, Idx) ->
+        ?RSTEP_MSG_QUEUE(JobId, WId, Step, RWId, Idx).
 
 
 table_name(Table, Type, Step) ->
@@ -409,23 +410,38 @@ table_name(Table, Type, Step) ->
                  atom_to_list(Type) ++ "_" ++
                  integer_to_list(Step)).
 
-table_insert(Table, X) ->
+table_insert(Type, Table, X) ->
   try
-    dets:insert(Table, X)
+    case Type of
+      vertex -> dets:insert(Table, X);
+      _ ->
+        case X of
+          {VName, Msgs} ->
+            lists:foreach(
+              fun(Msg) -> dets:insert(Table, {VName, Msg}) end, Msgs);
+          Lst ->
+            lists:foreach(
+              fun({VName, Msgs}) ->
+                  lists:foreach(
+                    fun(Msg) -> 
+                        dets:insert(Table, {VName, Msg}) end, Msgs)
+              end, Lst)
+        end
+    end
   catch
     E1:E2 ->
       ?DEBUG("Error while inserting into table..", 
              [{table, Table}, {error, E1, E2}]),
-      table_insert(Table, X, 120)
+      table_insert(Type, Table, X, 120)
   end.
 
-table_insert(Table, X, Counter) ->
+table_insert(Type, Table, X, Counter) ->
   case dets:info(Table) of
     undefined ->
       timer:sleep(1000),
-      table_insert(Table, X, Counter - 1);
+      table_insert(Type, Table, X, Counter - 1);
     _ ->
-      table_insert(Table, X)
+      table_insert(Type, Table, X)
   end.
       
 %% copy_step_file(JobId, WId, Step, Type) ->
@@ -441,7 +457,7 @@ store_vertex_helper(Table, Buffer, Vertex, WId, FDs) ->
   NewBuffer = 
     case length(Buffer) > 9 of
       true -> 
-        table_insert(Table, [Vertex|Buffer]), 
+        table_insert(vertex, Table, [Vertex|Buffer]), 
         [];
       _ -> [Vertex|Buffer]
     end,

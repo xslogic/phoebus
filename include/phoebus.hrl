@@ -14,6 +14,7 @@
         ?BASE_DIR() ++ atom_to_list(erlang:node()) ++ "/" 
         ++ JobId ++ "/" 
         ++ integer_to_list(WId) ++ "/").
+
 -define(LAST_STEP_FILE(JobId, WId), 
         ?JOB_DIR(JobId, WId) ++ "last_step").
 
@@ -29,6 +30,14 @@
         ?STEP_DIR(JobId, WId, Step) ++ "msg_queue_"
         ++ integer_to_list(Idx)).
 
+
+%% -define(EXT_MSG_DIR(JobId, WId, OWid, Step),
+%%         ?STEP_DIR(JobId, WId, Step) ++ "not_mine/" ++ OWid ++ "/").
+
+-define(MSG_TMP_FILE(JobId, WId, Step, OWid),
+        ?STEP_DIR(JobId, WId, Step) ++ "ext_msgs_temp_" 
+        ++ integer_to_list(OWid)).
+
 %% -define(ESTEP_VETEX_DATA(JobId, WId, Step, Idx), 
 %%         ?STEP_DIR(JobId, WId, Step) ++ "vertex_data_e" 
 %%         ++ integer_to_list(Idx)).
@@ -36,16 +45,16 @@
 %%         ?STEP_DIR(JobId, WId, Step) ++ "msg_queue_e"
 %%         ++ integer_to_list(Idx)).
 
--define(RSTEP_DIR(JobId, WId, Step, RNode, RWId), 
+-define(RSTEP_DIR(JobId, WId, Step, RWId), 
         ?JOB_DIR(JobId, WId) 
         ++ integer_to_list(Step) ++ "/"
-        ++ atom_to_list(RNode) ++ "/"
+        ++ "not_mine/"
         ++ integer_to_list(RWId) ++ "/").
--define(RSTEP_VETEX_DATA(JobId, WId, Step, RNode, RWId, Idx), 
-        ?RSTEP_DIR(JobId, WId, Step, RNode, RWId) ++ "vertex_data_" 
+-define(RSTEP_VETEX_DATA(JobId, WId, Step, RWId, Idx), 
+        ?RSTEP_DIR(JobId, WId, Step, RWId) ++ "vertex_data_" 
         ++ integer_to_list(Idx)).
--define(RSTEP_MSG_QUEUE(JobId, WId, Step, RNode, RWId, Idx), 
-        ?RSTEP_DIR(JobId, WId, Step, RNode, RWId) ++ "msg_queue_"
+-define(RSTEP_MSG_QUEUE(JobId, WId, Step, RWId, Idx), 
+        ?RSTEP_DIR(JobId, WId, Step, RWId) ++ "msg_queue_"
         ++ integer_to_list(Idx)).
                                                                           
  
