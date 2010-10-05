@@ -35,8 +35,8 @@
 %%--------------------------------------------------------------------
 start(_StartType, _StartArgs) ->
   error_logger:tty(false),
-  error_logger:logfile({open, 
-                        "/tmp/" ++ 
+  BaseDir = get_log_base(),
+  error_logger:logfile({open, BaseDir ++ 
                           atom_to_list(erlang:node()) ++ ".log"}),
   ets:new(table_mapping, [named_table, public]),
   ets:new(worker_registry, [named_table, public]),
@@ -45,7 +45,7 @@ start(_StartType, _StartArgs) ->
       {ok, Pid};
     Error ->
       Error
-        end.
+  end.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -63,3 +63,10 @@ stop(_State) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+get_log_base() ->
+  BaseDir = phoebus_utils:get_env(log_base, "/tmp/phoebus_logs/"),
+  worker_store:mkdir_p(BaseDir),
+  case lists:last(BaseDir) of
+    $/ -> BaseDir;
+    _ -> BaseDir ++ "/"
+  end.

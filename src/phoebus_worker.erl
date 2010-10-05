@@ -115,8 +115,8 @@ vsplit_phase1(timeout, #state{worker_info = {JobId, WId},
                               part_file = Partition} = State) ->
   ?DEBUG("Worker In State.. ", [{state, vsplit_phase1}, {job, JobId}, 
                                 {worker, WId}]),
-  {ok, SS} = phoebus_source:init(Partition),
-  {ok, RefPid, SS2} = phoebus_source:read_vertices_start(SS),  
+  {ok, SS} = phoebus_rw:init(Partition),
+  {ok, RefPid, SS2} = phoebus_rw:read_vertices_start(SS),  
   %% notify_master({MNode, MPid}, {vsplit_phase1_done, WId, 0}),
   {next_state, vsplit_phase1, 
    State#state{sub_state = {reading_partition, {RefPid, SS2, []}}}};
@@ -163,7 +163,7 @@ vsplit_phase1({vertices_done, Vertices, RefPid, SS},
                                 {job, JobId}, 
                                 {worker, WId}]),
   NewFDs = handle_vertices(NumWorkers, WInfo, Vertices, 0, FDs),
-  phoebus_source:destroy(SS),
+  phoebus_rw:destroy(SS),
   worker_store:sync_table(Table, vertex, 0, true),
   lists:foreach(
     fun({_, FD}) -> worker_store:close_step_file(vertex, FD) end, NewFDs),
@@ -590,9 +590,6 @@ iterate_msg({JobId, WId, NumWorkers, Step}, K, VTable, PrevFTable,
         case dets:lookup(PrevMTable, K) of
           [{_, _M}|_Rest] = Lst ->
             InMsgs = apply_combine(CombineFun, Lst),
-            %% InMsg = 
-            %%   lists:foldl(fun({_, Msg}, Acc) -> CombineFun(Msg, Acc) end,
-            %%               M, Rest),
             case dets:lookup(VTable, K) of
               [{VName, _, _} = OldVInfo] ->
                 {NewV, OutMsgs, VState} = AlgoFun(OldVInfo, InMsgs),
@@ -621,13 +618,6 @@ iterate_vertex({JobId, WId, NumWorkers, Step}, Sel, VTable, PrevMTable,
     fun({VName, _}, FDs) ->
         [OldVInfo] = dets:lookup(VTable, VName),
         InMsgs = apply_combine(CombineFun, dets:lookup(PrevMTable, VName)),
-          %% case dets:lookup(PrevMTable, VName) of
-          %%   [] -> [];
-          %%   [{_, M}|Rest] ->
-          %%     lists:foldl(
-          %%       fun({_, Msg}, Acc) -> CombineFun(Msg, Acc) end,
-          %%       M, Rest)
-          %% end,
         {NewV, OutMsgs, VState} = AlgoFun(OldVInfo, InMsgs),
         dets:insert(CurrFTable, {VName, VState}),
         dets:insert(VTable, NewV),

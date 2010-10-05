@@ -4,9 +4,9 @@
 %%% @doc
 %%%
 %%% @end
-%%% Created : 23 Sep 2010 by Arun Suresh <>
+%%% Created :  4 Oct 2010 by Arun Suresh <>
 %%%-------------------------------------------------------------------
--module(phoebus_source).
+-module(phoebus_rw).
 -include("phoebus.hrl").
 
 %% API
@@ -112,3 +112,4 @@ convert_to_rec([$\t | Rest], V, EList, Buffer, {tvname, EVal}) ->
   convert_to_rec(Rest, V, [{EVal, VName}|EList], [], eval);
 convert_to_rec([X | Rest], V, EList, Buffer, Token) ->
   convert_to_rec(Rest, V, EList, [X|Buffer], Token).
+
