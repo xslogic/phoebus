@@ -11,7 +11,7 @@
 -behaviour(gen_fsm).
 
 %% API
--export([start_link/6]).
+-export([start_link/7]).
 
 %% gen_fsm callbacks
 -export([init/1,          
@@ -28,12 +28,13 @@
 
 -define(SOURCE_TIMEOUT(), phoebus_utils:get_env(source_timeout, 120000)).
 -define(MASTER_TIMEOUT(), phoebus_utils:get_env(master_timeout, 300000)).
+-define(STORE(Type, Table, Rec), 
+        worker_store:table_insert(Type, Table, Rec)).
 
 
 -record(state, {worker_info, num_workers, part_file,
-                master_info, sub_state, step,
-                aggregate, table,
-                algo_fun, combine_fun
+                output_dir, master_info, sub_state, step,
+                aggregate, table, algo_fun, combine_fun
                }).
 
 %%%===================================================================
@@ -49,9 +50,10 @@
 %% @spec start_link() -> {ok, Pid} | ignore | {error, Error}
 %% @end
 %%--------------------------------------------------------------------
-start_link(WorkerInfo, NumWorkers, MInfo, Partition, AlgoFun, CombineFun) ->
+start_link(WorkerInfo, NumWorkers, MInfo,
+           Partition, OutputDir, AlgoFun, CombineFun) ->
   gen_fsm:start_link(?MODULE, [WorkerInfo, NumWorkers, 
-                               MInfo, Partition, 
+                               MInfo, Partition, OutputDir, 
                                AlgoFun, CombineFun], []).
 
 %%%===================================================================
@@ -72,7 +74,7 @@ start_link(WorkerInfo, NumWorkers, MInfo, Partition, AlgoFun, CombineFun) ->
 %% @end
 %%--------------------------------------------------------------------
 init([{JobId, WId} = WorkerInfo, NumWorkers, 
-      {MNode, MPid}, Partition, AlgoFun, CombineFun]) ->
+      {MNode, MPid}, Partition, OutputDir, AlgoFun, CombineFun]) ->
   MMonRef = erlang:monitor(process, MPid),
   erlang:group_leader(whereis(init), self()),
   Table = acquire_table(JobId, WId),
@@ -87,7 +89,8 @@ init([{JobId, WId} = WorkerInfo, NumWorkers,
    #state{master_info = {MNode, MPid, MMonRef}, worker_info = WorkerInfo,
           num_workers = NumWorkers, step = LastStep, sub_state = none,
           algo_fun = AlgoFun, combine_fun = CombineFun,
-          table = Table, part_file = Partition}, 0}.
+          output_dir = OutputDir, table = Table, 
+          part_file = Partition}, 0}.
 
 %%--------------------------------------------------------------------
 %% @private

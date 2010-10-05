@@ -77,7 +77,8 @@ reader_loop(FD, Pid, {State, Buffer}) ->
         V -> 
           case length(Buffer) > 100 of
             true ->
-              gen_fsm:send_event(Pid, {vertices, [V|Buffer], self(), State}),
+              gen_fsm:send_event(
+                Pid, {vertices, [V|Buffer], self(), State}),
               reader_loop(FD, Pid, {State, []});
             _ ->
               reader_loop(FD, Pid, {State, [V|Buffer]})

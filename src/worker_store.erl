@@ -18,6 +18,7 @@
          deserialize_rec/2,
          load_active_vertices/2,
          table_name/3,
+         table_insert/3,
          mkdir_p/1,
          serialize_rec/2,
          commit_step/3]).
@@ -159,6 +160,33 @@ store_vertex(Vertex, {Node, {JobId, MyWId, WId}}, Step, FDs) ->
 
 
 
+table_insert(Type, Table, X) ->
+  %% io:format("~n~n Inserting [~p,~p,~p] ~n~n", [Type, Table, X]),
+  try
+    case Type of
+      msg ->
+        case X of
+          {VName, Msgs} ->
+            lists:foreach(
+              fun(Msg) -> dets:insert(Table, {VName, Msg}) end, Msgs);
+          Lst ->
+            lists:foreach(
+              fun({VName, Msgs}) ->
+                  lists:foreach(
+                    fun(Msg) -> 
+                        dets:insert(Table, {VName, Msg}) end, Msgs)
+              end, Lst)
+        end;
+      _ -> dets:insert(Table, X)
+    end
+  catch
+    E1:E2 ->
+      ?DEBUG("Error while inserting into table..", 
+             [{table, Table}, {error, E1, E2}]),
+      table_insert(Type, Table, X, 120)
+  end.
+
+
 transfer_files(Node, {JobId, WId, OWid}, Step) ->  
   MyPid = self(),
   spawn(fun() -> transfer_loop(init, MyPid, Node, 
@@ -228,7 +256,7 @@ recv_loop({Type, WriteFD, Buffer, RCount}, JobId, WId, Mode, Step, Idx) ->
   receive
     {data, Data} -> 
       BinLines = re:split(Data, "\n"),
-      %% NOTE : Extracted Recs must be [{vId, VRec}]
+      %% io:format("~n~n Recvd lines : ~p ~n~n", [BinLines]),
       {VRecs, Rem} = extract_records(Type, Buffer, BinLines),      
       table_insert(Type, WriteFD, VRecs), 
       NewRCount = RCount + length(VRecs),
@@ -332,14 +360,14 @@ deserialize_rec(vertex, <<X, Rest/binary>>, V, EList, Buffer, Token) ->
   deserialize_rec(vertex, Rest, V, EList, <<Buffer/binary, X>>, Token);
 
 deserialize_rec(msg, <<$\r, _/binary>>, Msg, _, _, _) -> Msg;
-deserialize_rec(msg, <<$\t, Rest/binary>>, {_, _}, L, Buffer, vname) ->
+deserialize_rec(msg, <<$\t, Rest/binary>>, {_, _}, [], Buffer, vname) ->
   VName = binary_to_list(Buffer),
-  deserialize_rec(msg, Rest, {VName, []}, L, <<>>, vmsg);
-deserialize_rec(msg, <<$\t, Rest/binary>>, {VN, L}, L, Buffer, vmsg) ->
+  deserialize_rec(msg, Rest, {VName, []}, [], <<>>, vmsg);
+deserialize_rec(msg, <<$\t, Rest/binary>>, {VN, L}, [], Buffer, vmsg) ->
   Msg = binary_to_list(Buffer),
-  deserialize_rec(msg, Rest, {VN, [Msg|L]}, L, <<>>, vmsg);
-deserialize_rec(msg, <<X, Rest/binary>>, V, L, Buffer, Token) ->
-  deserialize_rec(msg, Rest, V, L, <<Buffer/binary, X>>, Token).
+  deserialize_rec(msg, Rest, {VN, [Msg|L]}, [], <<>>, vmsg);
+deserialize_rec(msg, <<X, Rest/binary>>, V, [], Buffer, Token) ->
+  deserialize_rec(msg, Rest, V, [], <<Buffer/binary, X>>, Token).
 
 
 
@@ -409,31 +437,6 @@ table_name(Table, Type, Step) ->
   list_to_atom(atom_to_list(Table) ++ "_" ++ 
                  atom_to_list(Type) ++ "_" ++
                  integer_to_list(Step)).
-
-table_insert(Type, Table, X) ->
-  try
-    case Type of
-      vertex -> dets:insert(Table, X);
-      _ ->
-        case X of
-          {VName, Msgs} ->
-            lists:foreach(
-              fun(Msg) -> dets:insert(Table, {VName, Msg}) end, Msgs);
-          Lst ->
-            lists:foreach(
-              fun({VName, Msgs}) ->
-                  lists:foreach(
-                    fun(Msg) -> 
-                        dets:insert(Table, {VName, Msg}) end, Msgs)
-              end, Lst)
-        end
-    end
-  catch
-    E1:E2 ->
-      ?DEBUG("Error while inserting into table..", 
-             [{table, Table}, {error, E1, E2}]),
-      table_insert(Type, Table, X, 120)
-  end.
 
 table_insert(Type, Table, X, Counter) ->
   case dets:info(Table) of

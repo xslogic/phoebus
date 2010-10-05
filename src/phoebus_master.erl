@@ -87,6 +87,7 @@ init([Conf]) ->
   %% DefCombineFun = fun(Msg1, Msg2) -> Msg1 ++ "||" ++ Msg2 end,
   Workers = start_workers(JobId, {erlang:node(), self()}, 
                           Partitions, 
+                          proplists:get_value(output_dir, Conf),
                           proplists:get_value(algo_fun, 
                                               Conf, DefAlgoFun),
                           proplists:get_value(combine_fun, 
@@ -369,7 +370,8 @@ notify_workers2(Workers, NextState, ExtraInfo) ->
 name(StrName) ->
   list_to_atom("master_" ++ StrName). 
 
-start_workers(JobId, MasterInfo, Partitions, AlgoFun, CombineFun) ->
+start_workers(JobId, MasterInfo, Partitions, 
+              OutputDir, AlgoFun, CombineFun) ->
   PartLen = length(Partitions),
   lists:foldl(
     fun(Part, Workers) ->
@@ -380,7 +382,7 @@ start_workers(JobId, MasterInfo, Partitions, AlgoFun, CombineFun) ->
         {ok, WPid} = 
           rpc:call(Node, phoebus_worker, start_link, 
                    [{JobId, WId}, PartLen, MasterInfo, Part, 
-                    AlgoFun, CombineFun]),
+                    OutputDir, AlgoFun, CombineFun]),
         MRef = erlang:monitor(process, WPid),
         [{Node, WId, WPid, MRef, vsplit_phase1}|Workers]
     end, [], Partitions).
