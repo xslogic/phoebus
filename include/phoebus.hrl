@@ -8,7 +8,11 @@
 %%%-------------------------------------------------------------------
 -author('arun.suresh@gmail.com').
 
--define(DEBUG(Str, Args), io:format(Str ++ ":~n~p~n", [Args])).
+%% -define(DEBUG(Str, Args), io:format(Str ++ ":~n~p~n", [Args])).
+%% -define(DEBUG(Str, Args), 
+%%         error_logger:info_msg(Str ++ ":~n~p~n", [Args])).
+-define(DEBUG(Str, Args), error_logger:info_report([Str|Args])).
+
 -define(BASE_DIR(), phoebus_utils:get_env(store_dir, "/tmp/phoebus/")).
 -define(JOB_DIR(JobId, WId), 
         ?BASE_DIR() ++ atom_to_list(erlang:node()) ++ "/" 

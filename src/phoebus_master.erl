@@ -324,7 +324,7 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%%===================================================================
 update_workers(CurrentState, NextState, ExtraInfo, 
                {Waiting, Finished}, WId) ->
-  ?DEBUG("~nMaster Recvd Event...", [{current, CurrentState}, 
+  ?DEBUG("Master Recvd Event...", [{current, CurrentState}, 
                                      {next, NextState}, 
                                      {workers, {Waiting, Finished}},
                                      {worker, WId}]),
@@ -340,7 +340,7 @@ update_workers(CurrentState, NextState, ExtraInfo,
                                      {worker, WId}]),
   case NewWaiting of
     [] -> 
-      ?DEBUG("~nMaster Shifting States...", [{current, CurrentState}, 
+      ?DEBUG("Master Shifting States...", [{current, CurrentState}, 
                                              {next, NextState}]),
       notify_workers(NewFinished, NextState, ExtraInfo),
       {{NewFinished, NewWaiting}, NextState};

@@ -34,6 +34,10 @@
 %% @end
 %%--------------------------------------------------------------------
 start(_StartType, _StartArgs) ->
+  error_logger:tty(false),
+  error_logger:logfile({open, 
+                        "/tmp/" ++ 
+                          atom_to_list(erlang:node()) ++ ".log"}),
   ets:new(table_mapping, [named_table, public]),
   ets:new(worker_registry, [named_table, public]),
   case phoebus_sup:start_link() of
