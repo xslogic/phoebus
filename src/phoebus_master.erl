@@ -72,16 +72,45 @@ init([Conf]) ->
   DefAlgoFun = 
     fun({VName, VValStr, EList}, InMsgs) -> 
         io:format("~n[~p]Recvd msgs : ~p ~n", [VName, InMsgs]),
-        ToGo = 
-          lists:foldl(fun(M, Acc) -> Acc ++ "||" ++ M end, 
-                      VValStr, InMsgs),
-        Msgs = 
-          lists:foldl(
-            fun({_EValStr, TVName}, MsgAcc) ->
-                [{TVName, ToGo}|MsgAcc]
-            end, [], EList),
-        io:format("[~p]Sending msgs : ~p ~n", [VName, Msgs]),
-        {{VName, ToGo, EList}, Msgs, hold}
+        {VInfo, O, S} = 
+          case VName of
+            "1" ->
+              OutMsgs = [{TV, VName} || {_, TV} <- EList],
+              {{VName, "_", EList}, OutMsgs, hold};
+            _ ->
+              case InMsgs of
+                [] -> {{VName, "inf", EList}, [], hold};
+                _ ->
+                  StartVal =
+                    case VValStr of
+                      VName -> "inf";
+                      _ -> VValStr
+                    end,
+                  Shortest =
+                    lists:foldl(
+                      fun(Msg, CurrSh) ->
+                          Split = re:split(Msg, ":", [{return, list}]),
+                          case (["inf"] =:= CurrSh) or 
+                            (length(Split) < length(CurrSh)) of
+                            true -> Split;
+                            _ -> CurrSh
+                          end
+                      end, re:split(StartVal, ":", [{return, list}]),
+                      InMsgs),
+                  NewVVal = string:join(Shortest, ":"),
+                  OutMsgs =
+                    [{TV, VName ++ ":" ++ NewVVal} 
+                     || {_, TV} <- EList],
+                  {{VName, NewVVal, EList}, OutMsgs, hold}
+              end
+              %% case VValStr of
+              %%   VName -> {{VName, "inf", EList}, [], hold};
+              %%   _ ->
+
+              %% end
+          end,                            
+        io:format("[~p]Sending msgs : ~p ~n", [VName, O]),
+        {VInfo, O, S}
     end,
   DefCombineFun = none,
   %% DefCombineFun = fun(Msg1, Msg2) -> Msg1 ++ "||" ++ Msg2 end,

@@ -322,8 +322,26 @@ post_algo(timeout, #state{master_info = {MNode, MPid, _},
 %% post_algo DONE
 %% ------------------------------------------------------------------------
 
-store_result(_Event, State) ->
+
+%% ------------------------------------------------------------------------
+%% store_result START
+%% Description : store result to outdir..
+%% ------------------------------------------------------------------------
+store_result(timeout, #state{output_dir = OutputDir, 
+                             step = Step,
+                             worker_info = {JobId, WId}} = State) ->
+  ?DEBUG("Worker In State.. ", [{state, post_algo}, {job, JobId}, 
+                                {worker, WId}, {output_dir, OutputDir}]),
+  {ok, SS} = phoebus_rw:init(OutputDir ++ "part-" 
+                             ++ integer_to_list(WId)),
+  {ok, VTable} =
+    worker_store:init_step_file(vertex, JobId, WId, [read], Step),
+  SS2 = store_result_loop(SS, VTable, start),
+  phoebus_rw:destroy(SS2),
   {next_state, await_master, State}.
+%% ------------------------------------------------------------------------
+%% store_result START
+%% ------------------------------------------------------------------------
 
 
 %% ------------------------------------------------------------------------
@@ -472,6 +490,23 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+store_result_loop(RWState, VTable, start) ->
+  case dets:select(VTable, [{{'$1', '$2', '$3'}, [], ['$_']}], 5) of
+    {Sel, Cont} ->
+      NewRWState = phoebus_rw:store_vertices(RWState,Sel),
+      store_result_loop(NewRWState, VTable, Cont);
+    '$end_of_table' -> RWState
+  end;
+store_result_loop(RWState, VTable, Cont) ->
+  case dets:select(Cont) of
+    {Sel, Cont2} ->
+      NewRWState = phoebus_rw:store_vertices(RWState,Sel),
+      store_result_loop(NewRWState, VTable, Cont2);
+    '$end_of_table' -> RWState
+  end.
+      
+      
+
 handle_vertices(NumWorkers, {JobId, MyWId}, Vertices, Step, FDs) ->
   lists:foldl(
     fun({VName, _, _} = Vertex, OldFDs) ->
@@ -596,15 +631,17 @@ iterate_msg({JobId, WId, NumWorkers, Step}, K, VTable, PrevFTable,
             case dets:lookup(VTable, K) of
               [{VName, _, _} = OldVInfo] ->
                 {NewV, OutMsgs, VState} = AlgoFun(OldVInfo, InMsgs),
-                dets:insert(CurrFTable, {VName, VState}),
-                dets:insert(VTable, NewV),
+                ?STORE(flag, CurrFTable, {VName, VState}),
+                ?STORE(vertex, VTable, NewV),
                 handle_msgs({JobId, WId, NumWorkers, Step}, WriteFDs, 
                             CurrMTable, OutMsgs);
               [] -> 
                 %% New vertex created...
-                dets:insert(VTable, {K, "new", []}),
-                dets:insert(CurrFTable, {K, active}),
-                WriteFDs
+                {NewV, OutMsgs, VState} = AlgoFun({K, K, []}, InMsgs),
+                ?STORE(flag, CurrFTable, {K, VState}),
+                ?STORE(vertex, VTable, NewV),
+                handle_msgs({JobId, WId, NumWorkers, Step}, WriteFDs, 
+                            CurrMTable, OutMsgs)
             end;
           _ -> WriteFDs
         end;
@@ -622,8 +659,8 @@ iterate_vertex({JobId, WId, NumWorkers, Step}, Sel, VTable, PrevMTable,
         [OldVInfo] = dets:lookup(VTable, VName),
         InMsgs = apply_combine(CombineFun, dets:lookup(PrevMTable, VName)),
         {NewV, OutMsgs, VState} = AlgoFun(OldVInfo, InMsgs),
-        dets:insert(CurrFTable, {VName, VState}),
-        dets:insert(VTable, NewV),
+        ?STORE(flag, CurrFTable, {VName, VState}),
+        ?STORE(vertex, VTable, NewV),
         handle_msgs({JobId, WId, NumWorkers, Step}, FDs, 
                     CurrMTable, OutMsgs)
     end, WriteFDs, Sel).
@@ -638,7 +675,7 @@ handle_msgs({JobId, WId, NumWorkers, Step}, WriteFDs, CurrMTable, Msgs) ->
           phoebus_utils:vertex_owner(JobId, VName, NumWorkers),
         case OWId of
           WId -> 
-            dets:insert(CurrMTable, {VName, Msg}), WFDs;
+            ?STORE(msg, CurrMTable, {VName, [Msg]}), WFDs;
           _ -> 
             
             {NewWFDs, WriteFD, _File} = 

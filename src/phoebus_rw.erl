@@ -10,7 +10,10 @@
 -include("phoebus.hrl").
 
 %% API
--export([init/1, partition_input/1, read_vertices_start/1, destroy/1]).
+-export([init/1, partition_input/1, 
+         read_vertices_start/1, 
+         store_vertices/2,
+         destroy/1]).
 
 %%%===================================================================
 %%% API
@@ -42,8 +45,29 @@ read_vertices_start(State) ->
       {error, State}
   end.  
 
-destroy(_) ->
-  void.
+store_vertices(State, Vertices) ->
+  case proplists:get_value(is_dir, State) of
+    false ->
+      {FD, NewState} = 
+        case proplists:get_value(open_file_ref, State) of
+          undefined ->
+            {ok, F} = 
+              file:open(proplists:get_value(abs_path, State), [write]),
+            {F, [{open_file_ref, F}|State]};
+          F -> {F, State}
+        end,
+      lists:foreach(
+        fun(V) -> file:write(FD, serialize(V)) end, Vertices),
+      NewState;
+    _ ->
+      {error, State}
+  end.  
+
+destroy(State) ->
+  case proplists:get_value(open_file_ref, State) of
+    undefined -> ok;
+    FD -> file:close(FD)
+  end.
  
 %%--------------------------------------------------------------------
 %% @doc
@@ -72,7 +96,7 @@ reader_loop({init, File}, Pid, State) ->
 reader_loop(FD, Pid, {State, Buffer}) ->
   case file:read_line(FD) of
     {ok, Line} ->
-      case convert_to_rec(Line) of
+      case deserialize(Line) of
         nil -> reader_loop(FD, Pid, {State, Buffer});
         V -> 
           case length(Buffer) > 100 of
@@ -89,28 +113,31 @@ reader_loop(FD, Pid, {State, Buffer}) ->
       file:close(FD)
   end.
       
+
+serialize(V) ->
+  worker_store:serialize_rec(vertex, V).
   
 %% {Vid, VName, VVal, VState, [{EVal, VName}]
 %% vname \t vval \t [eval \t tvname \t].. \n
-convert_to_rec(Line) ->
-  convert_to_rec(Line, #vertex{}, [], [], vname).
+deserialize(Line) ->
+  deserialize(Line, #vertex{}, [], [], vname).
 
-convert_to_rec([$\n | _], #vertex{vertex_id = nil}, _, _, _) -> nil;
-convert_to_rec([$\n | _], V, EList, _, _) ->
+deserialize([$\n | _], #vertex{vertex_id = nil}, _, _, _) -> nil;
+deserialize([$\n | _], V, EList, _, _) ->
   {V#vertex.vertex_name, V#vertex.vertex_value, EList};
-convert_to_rec([$\t | Rest], V, EList, Buffer, vname) ->
+deserialize([$\t | Rest], V, EList, Buffer, vname) ->
   VName = lists:reverse(Buffer),
   VId = erlang:phash2(VName, 4294967296),
-  convert_to_rec(Rest, V#vertex{vertex_id = VId, 
+  deserialize(Rest, V#vertex{vertex_id = VId, 
                                 vertex_name = VName}, EList, [], vval);
-convert_to_rec([$\t | Rest], V, EList, Buffer, vval) ->
-  convert_to_rec(Rest, V#vertex{vertex_value = lists:reverse(Buffer)}, 
+deserialize([$\t | Rest], V, EList, Buffer, vval) ->
+  deserialize(Rest, V#vertex{vertex_value = lists:reverse(Buffer)}, 
                  EList, [], eval);
-convert_to_rec([$\t | Rest], V, EList, Buffer, eval) ->
-  convert_to_rec(Rest, V, EList, [], {tvname, lists:reverse(Buffer)});
-convert_to_rec([$\t | Rest], V, EList, Buffer, {tvname, EVal}) ->
+deserialize([$\t | Rest], V, EList, Buffer, eval) ->
+  deserialize(Rest, V, EList, [], {tvname, lists:reverse(Buffer)});
+deserialize([$\t | Rest], V, EList, Buffer, {tvname, EVal}) ->
   VName = lists:reverse(Buffer),
-  convert_to_rec(Rest, V, [{EVal, VName}|EList], [], eval);
-convert_to_rec([X | Rest], V, EList, Buffer, Token) ->
-  convert_to_rec(Rest, V, EList, [X|Buffer], Token).
+  deserialize(Rest, V, [{EVal, VName}|EList], [], eval);
+deserialize([X | Rest], V, EList, Buffer, Token) ->
+  deserialize(Rest, V, EList, [X|Buffer], Token).
 
