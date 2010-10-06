@@ -10,21 +10,21 @@ It supports a Distributed model of computation similar to MapReduce[2], but more
 Computational Model
 -------------------
 * A Graph is partitioned into a groups of Records.
-* A Record consists of a Vertice and its outgoing Edges (An Edge is a Tuple consisting of the edge weight and the target vertice name).
+* A Record consists of a Vertex and its outgoing Edges (An Edge is a Tuple consisting of the edge weight and the target vertex name).
 * A User specifies a 'Compute' function that is applied to each Record.
 * Computation on the graph happens in a sequence of incremental Super Steps.
 * At each Super step, the Compute function is applied to all 'active' vertice of the graph.
-* Vertices communication via Message Passing.
-* The Compute function is provided with the Vertice record and all Messages sent to the Vertice in the previous SuperStep.
+* Vertices communicate with each other via Message Passing.
+* The Compute function is provided with the Vertex record and all Messages sent to the Vertex in the previous SuperStep.
 * A Compute funtion can
-  - Mutate the value associated to a vertice
+  - Mutate the value associated to a vertex
   - Add/Remove outgoing edges.
   - Mutate Edge weight
-  - Send a Message to any other vertice in the graph.
-  - Change state of the vertice from 'active' to 'hold'.
-* At the begining of each SuperStep, if there are no more active vertices -and- if there are no messages to be sent to any vertice, the algorithm terminates.
+  - Send a Message to any other vertex in the graph.
+  - Change state of the vertex from 'active' to 'hold'.
+* At the begining of each SuperStep, if there are no more active vertices -and- if there are no messages to be sent to any vertex, the algorithm terminates.
 * A User may additionally specify a 'MaxSteps' to stop the algorithm after a some number of super steps.
-* A User may additionally specify a 'Combine' funtion that is applied to the all the Messages targetted at a Vertice before the Compute function is applied to it. 
+* A User may additionally specify a 'Combine' funtion that is applied to the all the Messages targetted at a Vertex before the Compute function is applied to it. 
 
 Distributed Processing
 ----------------------
@@ -34,7 +34,7 @@ Distributed Processing
 * The Master then askes the Worker to perform a Super step on its partition and awaits notification from the Worker of Step completion.
 * The Step number is incremented untill all Workers report that they have no more 'active' Vertices and no more outstanding messages to be deliverd.
 
-Getting it to work (Tested on Mas OS X Snow Leopard)
+Getting it to work (Tested on Mac OS X Snow Leopard)
 ------------------
 Requirement: 
 * rebar (Download from http://hg.basho.com/rebar/downloads/rebar)
@@ -81,7 +81,7 @@ Requirement:
 
 
 5) Creating input data set: Currently, Phoebus requires each Input record be line delimited. It must be of the form 
-    "<VerticeName>\t<VerticeValue>\t<EdgeWeight1>\t<TargetVerticeName1>\t<EdgeWeight2>\t<TargetVerticeName2>...\n"
+    "<VertexName>\t<VertexValue>\t<EdgeWeight1>\t<TargetVertexName1>\t<EdgeWeight2>\t<TargetVertexName2>...\n"
    The module "algos" that comes with Phoebus has a utility function that can generate Binary Tree as a sample input data set.
 
   (phoebusr1@my-machine)1> algos:create_binary_tree("/tmp/input", 4, 1000).
@@ -117,12 +117,12 @@ Requirement:
   201 100:50:25:12:6:3:1  1 402 1 403 
   203 101:50:25:12:6:3:1  1 406 1 407 
 
-  The Second column (The value of the Vertice) gives the shortest path to the vertice from the root of the binary tree 
+  The Second column (The value of the Vertex) gives the shortest path to the vertex from the root of the binary tree 
 
 
 Next Steps
 ----------
-* Currently supports reading/writing from/to local filesystem.. Need to extend it to read/write from a distributed filesystem like HDFS[2] or DDFS[3]
+* Currently supports reading/writing from/to local filesystem.. Need to extend it to read/write from a distributed filesystem like HDFS[3] or DDFS[4]
 * Need to fix Fault tolerence and Error Handling.. If Worker dies, master must ask another worker on another node to take up work
 * The Pregel paper talks of an 'Aggregate' Function... need to implement.. 
 * Support Jobs written in Python.
@@ -131,5 +131,6 @@ Next Steps
 References
 ----------
 1. (http://portal.acm.org/citation.cfm?id=1582716.1582723) Grzegorz Malewicz, Matthew H. Austern, Aart J. C. Bik, James C. Dehnert, Ilan Horn, Naty Leiser, and Grzegorz Czajkowski, Pregel: A System for Large-Scale Graph Processing
-2. Hadoop Distributed File system (http://hadoop.apache.org/hdfs/)
-3. Disco Distributed File System (http://discoproject.org/doc/start/ddfs.html) 
+2. MapReduce (http://en.wikipedia.org/wiki/MapReduce)
+3. Hadoop Distributed File system (http://hadoop.apache.org/hdfs/)
+4. Disco Distributed File System (http://discoproject.org/doc/start/ddfs.html) 
