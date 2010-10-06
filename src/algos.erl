@@ -9,7 +9,7 @@
 -module(algos).
 
 %% API
--export([shortest_path/2]).
+-export([shortest_path/2, create_binary_tree/3]).
 
 %%%===================================================================
 %%% API
@@ -50,6 +50,33 @@ shortest_path({VName, VValStr, EList}, InMsgs) ->
     end,                            
   io:format("[~p]Sending msgs : ~p ~n", [VName, O]),
   {VInfo, O, S}.
+
+
+create_binary_tree(Dir, NumFiles, NumRecs) ->
+  TargetDir = 
+    case lists:last(Dir) of
+      $/ -> ok = worker_store:mkdir_p(Dir), Dir;
+      _ -> ok = worker_store:mkdir_p(Dir ++ "/"), Dir ++ "/"
+    end,    
+  FDs = 
+    lists:foldl(
+      fun(X, AFDs) ->
+          {ok, FD} =
+            file:open(TargetDir ++ "infile" ++ integer_to_list(X),
+                      [write]),
+          [FD|AFDs]
+      end, [], lists:seq(1, NumFiles)),
+  Fn = fun(N) -> integer_to_list(N) end,
+  lists:foldl(
+    fun(N, [F|Rest]) ->
+        Line = 
+          lists:concat(
+            [Fn(N),"\t",Fn(N),"\t1\t",Fn(N*2),"\t1\t",Fn((N*2)+1),"\t\n"]),
+        file:write(F, Line),
+        Rest ++ [F]
+    end, FDs, lists:seq(1, NumRecs)),
+  lists:foreach(fun(FD) -> file:close(FD) end, FDs).          
+
 
 %%%===================================================================
 %%% Internal functions

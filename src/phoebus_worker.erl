@@ -330,6 +330,7 @@ post_algo(timeout, #state{master_info = {MNode, MPid, _},
 %% ------------------------------------------------------------------------
 store_result(timeout, #state{output_dir = OutputDir, 
                              step = Step,
+                             table = Table,
                              worker_info = {JobId, WId}} = State) ->
   ?DEBUG("Worker In State.. ", [{state, post_algo}, {job, JobId}, 
                                 {worker, WId}, {output_dir, OutputDir}]),
@@ -338,6 +339,7 @@ store_result(timeout, #state{output_dir = OutputDir,
   {ok, VTable} =
     worker_store:init_step_file(vertex, JobId, WId, [read], Step),
   SS2 = store_result_loop(SS, VTable, start),
+  release_table(Table, JobId, WId),
   phoebus_rw:destroy(SS2),
   {next_state, await_master, State}.
 %% ------------------------------------------------------------------------
@@ -542,7 +544,7 @@ notify_master({MNode, MPid}, Notification) ->
 
 %% TODO : have to implemnt.. using a table manager..
 acquire_table(JobId, WId) ->
-  Table = list_to_atom("test_table_" ++ integer_to_list(WId)),
+  Table = table_manager:acquire_table(JobId, WId),
   %% Vtable = Worker_store:table_name(Table, vertex),
   %% MTable = worker_store:table_name(Table, msg),
   ets:insert(table_mapping, {{JobId, WId}, Table}), 
@@ -550,6 +552,10 @@ acquire_table(JobId, WId) ->
   worker_store:init_step_file(flag, JobId, WId, [write], 0),
   worker_store:init_step_file(msg, JobId, WId, [write], 0),
   Table.
+
+release_table(Table, JobId, WId) ->
+  table_manager:release_table(Table),
+  ets:delete(table_mapping, {JobId, WId}).
 
 register_worker(JobId, WId) ->
   ets:insert(worker_registry, {{JobId, WId}, self()}).
@@ -662,6 +668,8 @@ iterate_vertex({JobId, WId, NumWorkers, Step}, Sel, VTable, PrevMTable,
           case dets:lookup(VTable, VName) of
             [OV] -> [OV];
             {error, {premature_eof, _}} ->
+              %% Weird "premature_eof" error from dets sometimes
+              %% when size of partion is <500 and >=250
               io:format("~n~nGot Error while looking up [~p, ~p]~n~n",
                         [VTable, VName]),
               worker_store:sync_table(VTable, true),
