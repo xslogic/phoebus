@@ -9,7 +9,8 @@
 -module(phoebus_utils).
 -include("phoebus.hrl").
 %% API
--export([vertex_owner/3, all_nodes/0, map_to_node/2, job_id/0, get_env/2]).
+-export([vertex_owner/3, all_nodes/0, map_to_node/3, 
+         map_to_node/2, job_id/0, get_env/2]).
 
 %%%===================================================================
 %%% API
@@ -21,16 +22,21 @@ vertex_owner(JobId, VId, NumWorkers) ->
   {map_to_node(JobId, WorkerId), WorkerId}.    
 
 %% TODO : This has to be configurable...
-map_to_node(_JobId, WorkerId) -> 
-  AllNodes = all_nodes(),
+map_to_node(_JobId, WorkerId, AllNodes) -> 
+  NodeIdx = ((WorkerId - 1) rem length(AllNodes)) + 1,
+  lists:nth(NodeIdx, AllNodes).
+
+map_to_node(JobId, WorkerId) -> 
+  [{JobId, AllNodes}] = ets:lookup(all_nodes, JobId),
   NodeIdx = ((WorkerId - 1) rem length(AllNodes)) + 1,
   lists:nth(NodeIdx, AllNodes).
   
 
-%% Returns [Nodes]
 all_nodes() ->
+  NList = net_adm:world_list([list_to_atom(net_adm:localhost())]),
+  lists:sort(NList).
   %% TODO : implement
-  ['phoebus1@needplant-lm', 'phoebus2@needplant-lm'].
+  %% ['phoebus1@needplant-lm', 'phoebus2@needplant-lm'].
   %% [erlang:node()].
 
 %% Returns "nodename_timestamp"

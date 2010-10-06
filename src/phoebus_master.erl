@@ -27,7 +27,9 @@
          handle_sync_event/4, handle_info/3, terminate/3, code_change/4]).
 
 -record(state, {step = 0, max_steps, vertices = 0, job_id,
-                conf, workers = {[], []}, algo_sub_state = 0}).
+                conf, workers = {[], []}, algo_sub_state = none}).
+
+-record(algo_sub_state, {num_active = 0}).
 
 %%%===================================================================
 %%% API
@@ -162,12 +164,19 @@ vsplit_phase3({vsplit_phase3_done, WId, _WData},
 %% ------------------------------------------------------------------------
 
 algo({algo_done, WId, NumMsgsActive}, 
-              #state{step = Step, workers = Workers, 
-                     algo_sub_state = A} = State) ->
+     #state{step = Step, workers = Workers, 
+            algo_sub_state = AS} = State) ->
   {NewWorkers, NextState} = 
     update_workers(algo, post_algo, Step, Workers, WId),  
-  {next_state, NextState, State#state{workers = NewWorkers, 
-                                      algo_sub_state = A + NumMsgsActive}}.
+  NewSubState = 
+    case AS of
+      none -> #algo_sub_state{num_active = NumMsgsActive};
+      #algo_sub_state{num_active = A} -> 
+        AS#algo_sub_state{num_active = A + NumMsgsActive}
+    end,
+  {next_state, NextState, State#state{
+                            workers = NewWorkers, 
+                            algo_sub_state = NewSubState}}.
 
 
 post_algo({post_algo_done, WId, _WData}, 
@@ -184,7 +193,8 @@ post_algo({post_algo_done, WId, _WData},
 
 
 check_algo_finish(timeout, #state{step = Step, max_steps = MaxSteps, 
-                                  algo_sub_state = A,
+                                  algo_sub_state = 
+                                    #algo_sub_state{num_active = A},
                                   workers = {Workers, []}} = State) ->
   {NextState, NextStep} = 
     case Step < MaxSteps of
@@ -197,7 +207,7 @@ check_algo_finish(timeout, #state{step = Step, max_steps = MaxSteps,
     end,
   NewWorkers = notify_workers2(Workers, NextState, NextStep),
   {next_state, NextState, State#state{workers = {NewWorkers, []}, 
-                                      algo_sub_state = 0,
+                                      algo_sub_state = none,
                                       step = NextStep}}.
 
 
@@ -281,6 +291,13 @@ handle_sync_event(_Event, _From, StateName, State) ->
 %%                   {stop, Reason, NewState}
 %% @end
 %%--------------------------------------------------------------------
+%% handle_info({'DOWN', MRef, _, _, _}, StateName,
+%%             #state{step = Step, algo_sub_state = A,
+%%                    workers = {Workers, []}} = State) ->
+%%   ?DEBUG("Master Down... Shutting Down..", [{state_name, StateName}, 
+%%                                              {job, JobId}, {worker, WId}]),
+%%   {stop, monitor_down, State};  
+
 handle_info(_Info, StateName, State) ->
   {next_state, StateName, State}.
 
@@ -363,15 +380,16 @@ name(StrName) ->
 start_workers(JobId, MasterInfo, Partitions, 
               OutputDir, AlgoFun, CombineFun) ->
   PartLen = length(Partitions),
+  Nodes = phoebus_utils:all_nodes(),
   lists:foldl(
     fun(Part, Workers) ->
         WId = length(Workers) + 1,
-        Node = phoebus_utils:map_to_node(JobId, WId),
+        Node = phoebus_utils:map_to_node(JobId, WId, Nodes),
         %% TODO : Make Async
         %% [{Node, wId, wPid, wMonRef}]
         {ok, WPid} = 
           rpc:call(Node, phoebus_worker, start_link, 
-                   [{JobId, WId}, PartLen, MasterInfo, Part, 
+                   [{JobId, WId, Nodes}, PartLen, MasterInfo, Part, 
                     OutputDir, AlgoFun, CombineFun]),
         MRef = erlang:monitor(process, WPid),
         [{Node, WId, WPid, MRef, vsplit_phase1}|Workers]

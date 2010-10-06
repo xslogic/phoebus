@@ -40,6 +40,7 @@ start(_StartType, _StartArgs) ->
                           atom_to_list(erlang:node()) ++ ".log"}),
   ets:new(table_mapping, [named_table, public]),
   ets:new(worker_registry, [named_table, public]),
+  ets:new(all_nodes, [named_table, public]),
   case phoebus_sup:start_link() of
     {ok, Pid} ->
       {ok, Pid};

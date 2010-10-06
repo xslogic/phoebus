@@ -12,7 +12,8 @@
 %% API
 -export([purge/0, init/2, store_vertex/4, 
          init_step_file/5, init_step_file/6, 
-         sync_table/4, close_step_file/2, 
+         sync_table/2, sync_table/4, 
+         close_step_file/2, 
          transfer_files/3,
          create_receiver/6,
          deserialize_rec/2,
@@ -81,9 +82,16 @@ init_rstep_file(Type, JobId, WId, RWId, Mode, Step, Idx) ->
 
 sync_table(Table, Type, Step, IsForce) ->
   TName = table_name(Table, Type, Step),
-  [{_, LastSync}] = ets:lookup(worker_registry, {TName, sync}), 
+  sync_table(TName, IsForce).
+
+sync_table(TName, IsForce) ->
+  LastSync = 
+    case ets:lookup(worker_registry, {TName, sync}) of
+      [{_, LS}] -> LS;
+      _ -> 0
+    end,
   CurrSize = dets:info(TName, size),
-  case (((CurrSize - LastSync) > 1000) or IsForce) of
+  case (((CurrSize - LastSync) > 100) or IsForce) of
     true -> 
       ets:insert(worker_registry, {{TName, sync}, CurrSize}),
       FileName = dets:info(TName, filename),

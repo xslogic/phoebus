@@ -73,24 +73,25 @@ start_link(WorkerInfo, NumWorkers, MInfo,
 %%                     {stop, StopReason}
 %% @end
 %%--------------------------------------------------------------------
-init([{JobId, WId} = WorkerInfo, NumWorkers, 
+init([{JobId, WId, Nodes}, NumWorkers, 
       {MNode, MPid}, Partition, OutputDir, AlgoFun, CombineFun]) ->
   MMonRef = erlang:monitor(process, MPid),
   erlang:group_leader(whereis(init), self()),
+  ets:insert(all_nodes, {JobId, Nodes}),
   Table = acquire_table(JobId, WId),
   register_worker(JobId, WId),
   {last_step, LastStep} = worker_store:init(JobId, WId),
-  WorkerState = 
+  {WorkerState, Step, Timeout} = 
     case (LastStep < 0) of
-      true -> vsplit_phase1;
-      _ -> algo
+      true -> {vsplit_phase1, 0, 0};
+      _ -> {await_master, LastStep, ?MASTER_TIMEOUT()}
     end,                
   {ok, WorkerState, 
-   #state{master_info = {MNode, MPid, MMonRef}, worker_info = WorkerInfo,
-          num_workers = NumWorkers, step = LastStep, sub_state = none,
+   #state{master_info = {MNode, MPid, MMonRef}, worker_info = {JobId, WId},
+          num_workers = NumWorkers, step = Step, sub_state = none,
           algo_fun = AlgoFun, combine_fun = CombineFun,
           output_dir = OutputDir, table = Table, 
-          part_file = Partition}, 0}.
+          part_file = Partition}, Timeout}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -555,6 +556,7 @@ register_worker(JobId, WId) ->
 
 run_algo({JobId, WId, NumWorkers}, 
          {IterType, Table}, AlgoFun, CombineFun, Step) ->
+  worker_store:sync_table(Table, vertex, Step, true),
   PrevFTable = worker_store:table_name(Table, flag, Step - 1),
   PrevMTable = worker_store:table_name(Table, msg, Step - 1),
   CurrFTable = worker_store:table_name(Table, flag, Step - 1),
@@ -656,11 +658,27 @@ iterate_vertex({JobId, WId, NumWorkers, Step}, Sel, VTable, PrevMTable,
                CurrFTable, CurrMTable, AlgoFun, CombineFun, WriteFDs) ->
   lists:foldl(
     fun({VName, _}, FDs) ->
-        [OldVInfo] = dets:lookup(VTable, VName),
+        [OldVInfo] =
+          case dets:lookup(VTable, VName) of
+            [OV] -> [OV];
+            {error, {premature_eof, _}} ->
+              io:format("~n~nGot Error while looking up [~p, ~p]~n~n",
+                        [VTable, VName]),
+              worker_store:sync_table(VTable, true),
+              dets:lookup(VTable, VName)
+          end,
         InMsgs = apply_combine(CombineFun, dets:lookup(PrevMTable, VName)),
         {NewV, OutMsgs, VState} = AlgoFun(OldVInfo, InMsgs),
         ?STORE(flag, CurrFTable, {VName, VState}),
-        ?STORE(vertex, VTable, NewV),
+        try
+          ?STORE(vertex, VTable, NewV)
+        catch
+          E1:E2 ->
+            io:format("~n~nGot Error while writing [~p, ~p, ~p]~n~n",
+                      [E1, E2, NewV]),
+            worker_store:sync_table(VTable, true),
+            ?STORE(vertex, VTable, NewV)
+        end,
         handle_msgs({JobId, WId, NumWorkers, Step}, FDs, 
                     CurrMTable, OutMsgs)
     end, WriteFDs, Sel).
