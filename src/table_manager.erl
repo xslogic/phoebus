@@ -82,6 +82,7 @@ handle_call({acquire, JobId, WId}, {Pid, _} = From, State) ->
   case ets:select(table_pool, [{{'$1', none, '_'}, [], ['$$']}], 1) of
     {[[T]], _} ->
       ets:insert(table_pool, {T, {JobId, WId}, MRef}),
+      ets:insert(table_mapping, {{JobId, WId}, T}), 
       {reply, T, State};
     _ ->
       {noreply, [{From, {JobId, WId}, MRef}|State]}
@@ -101,15 +102,17 @@ handle_cast({release, Table}, State) ->
   case State of
     [] -> 
       case ets:lookup(table_pool, Table) of
-        [{Table, _, MRef}] ->
+        [{Table, CInfo, MRef}] ->
           erlang:demonitor(MRef),
-          ets:insert(table_pool, {Table, none, none});
+          ets:insert(table_pool, {Table, none, none}),
+          ets:delete(table_mapping, CInfo);
         _ -> void
       end,
       {noreply, []};
     _ -> 
       [{From, CInfo, MRef}|Rest] = lists:reverse(State),
       ets:insert(table_pool, {Table, CInfo, MRef}),
+      ets:insert(table_mapping, {CInfo, Table}),
       gen_server:reply(From, Table),
       {noreply, lists:reverse(Rest)}
   end.
@@ -126,15 +129,17 @@ handle_cast({release, Table}, State) ->
 %%--------------------------------------------------------------------
 handle_info({'DOWN', MRef, _, _, _}, State) ->
   case ets:select(table_pool, [{{'$1', '_', MRef}, [], ['$_']}]) of
-    [{Table, _, MRef}] ->
+    [{Table, CInfo, MRef}] ->
       case State of
         [] ->
           erlang:demonitor(MRef),
           ets:insert(table_pool, {Table, none, none}),
+          ets:delete(table_mapping, CInfo),
           {noreply, []};
         _ ->
           [{From, CInfo, MRef2}|Rest] = lists:reverse(State),
           ets:insert(table_pool, {Table, CInfo, MRef2}),
+          ets:insert(table_mapping, {CInfo, Table}),
           gen_server:reply(From, Table),
           {noreply, lists:reverse(Rest)}
       end;

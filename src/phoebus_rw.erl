@@ -91,7 +91,7 @@ start_reading(file, File, State) ->
 
 
 reader_loop({init, File}, Pid, State) ->
-  {ok, FD} = file:open(File, [raw, {read_ahead, 16384}]),
+  {ok, FD} = file:open(File, [raw, read_ahead]),
   reader_loop(FD, Pid, State);
 reader_loop(FD, Pid, {State, Buffer}) ->
   case file:read_line(FD) of

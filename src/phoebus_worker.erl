@@ -547,15 +547,14 @@ acquire_table(JobId, WId) ->
   Table = table_manager:acquire_table(JobId, WId),
   %% Vtable = Worker_store:table_name(Table, vertex),
   %% MTable = worker_store:table_name(Table, msg),
-  ets:insert(table_mapping, {{JobId, WId}, Table}), 
   worker_store:init_step_file(vertex, JobId, WId, [write], 0),
   worker_store:init_step_file(flag, JobId, WId, [write], 0),
   worker_store:init_step_file(msg, JobId, WId, [write], 0),
   Table.
 
-release_table(Table, JobId, WId) ->
-  table_manager:release_table(Table),
-  ets:delete(table_mapping, {JobId, WId}).
+release_table(Table, _JobId, _WId) ->
+  table_manager:release_table(Table).
+  %% ets:delete(table_mapping, {JobId, WId}).
 
 register_worker(JobId, WId) ->
   ets:insert(worker_registry, {{JobId, WId}, self()}).

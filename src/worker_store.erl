@@ -143,28 +143,17 @@ store_vertex(Vertex, {_, {JobId, MyWId, WId}}, Step, FDs)
       OldTD -> OldTD
     end,
   store_vertex_helper(Table, Buffer, Vertex, WId, FDs);
-store_vertex(Vertex, {Node, {JobId, MyWId, WId}}, Step, FDs) ->
-  case erlang:node() of
-    Node ->
-      {Table, Buffer} = 
-        case proplists:get_value(WId, FDs) of
-          undefined -> 
-            {get_other_worker_table(JobId, WId, vertex, Step), []};
-          TD -> TD
-        end,
-      store_vertex_helper(Table, Buffer, Vertex, WId, FDs);
-    _ ->        
-      VRec = serialize_rec(vertex, Vertex),
-      {ok, FD} = 
-        case proplists:get_value(WId, FDs) of
-          undefined -> 
-            init_rstep_file(vertex, JobId, MyWId, WId, [write], Step);
-          OldFD -> {ok, OldFD}
-        end,
-      file:write(FD, VRec),
-      TempFDs = lists:keydelete(WId, 1, FDs),
-      [{WId, FD}|TempFDs]
-  end.
+store_vertex(Vertex, {_Node, {JobId, MyWId, WId}}, Step, FDs) ->
+  VRec = serialize_rec(vertex, Vertex),
+  {ok, FD} = 
+    case proplists:get_value(WId, FDs) of
+      undefined -> 
+        init_rstep_file(vertex, JobId, MyWId, WId, [write], Step);
+      OldFD -> {ok, OldFD}
+    end,
+  file:write(FD, VRec),
+  TempFDs = lists:keydelete(WId, 1, FDs),
+  [{WId, FD}|TempFDs].
 
 
 
@@ -245,7 +234,7 @@ trans_loop(LocalFName, ReadFD, WriteFD) ->
       trans_loop(LocalFName, ReadFD, WriteFD);
     eof ->
       file:close(ReadFD),
-      file:delete(LocalFName),
+      %% file:delete(LocalFName),
       MRef = erlang:monitor(process, WriteFD),
       WriteFD ! {close, self()},
       receive
@@ -293,14 +282,14 @@ wait_table_loop(Type, JobId, OWid, Pid, Step, Counter) ->
         undefined ->
           ?DEBUG("Table unopen... waiting..", 
                  [{job, JobId}, {worker, OWid}, {counter, Counter}]),
-          timer:sleep(10000), 
+          timer:sleep(20000), 
           wait_table_loop(Type, JobId, OWid, Pid, Step, Counter - 1);
         _ ->Pid ! {table, Table}
       end;
     _ -> 
       ?DEBUG("Table NOT acquired... waiting..", 
              [{job, JobId}, {worker, OWid}, {counter, Counter}]),
-      timer:sleep(10000), 
+      timer:sleep(20000), 
       wait_table_loop(Type, JobId, OWid, Pid, Step, Counter - 1)
   end.
 
