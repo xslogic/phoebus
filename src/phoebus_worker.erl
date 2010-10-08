@@ -330,7 +330,6 @@ post_algo(timeout, #state{master_info = {MNode, MPid, _},
 %% ------------------------------------------------------------------------
 store_result(timeout, #state{output_dir = OutputDir, 
                              step = Step,
-                             table = Table,
                              worker_info = {JobId, WId}} = State) ->
   ?DEBUG("Worker In State.. ", [{state, post_algo}, {job, JobId}, 
                                 {worker, WId}, {output_dir, OutputDir}]),
@@ -339,7 +338,7 @@ store_result(timeout, #state{output_dir = OutputDir,
   {ok, VTable} =
     worker_store:init_step_file(vertex, JobId, WId, [read], Step),
   SS2 = store_result_loop(SS, VTable, start),
-  release_table(Table, JobId, WId),
+  %% release_table(Table, JobId, WId),
   phoebus_rw:destroy(SS2),
   {next_state, await_master, State}.
 %% ------------------------------------------------------------------------
@@ -514,6 +513,10 @@ handle_vertices(NumWorkers, {JobId, MyWId}, Vertices, Step, FDs) ->
   lists:foldl(
     fun({VName, _, _} = Vertex, OldFDs) ->
         {Node, WId} = phoebus_utils:vertex_owner(JobId, VName, NumWorkers),
+        %% case VName of
+        %%   "160" -> io:format("~n~n [~p] : [~p] ~n~n", [MyWId, WId]);
+        %%   _ -> void
+        %% end,                     
         worker_store:store_vertex(Vertex, {Node, {JobId, MyWId, WId}}, 
                                   Step, OldFDs)
     end, FDs, Vertices).  
@@ -545,16 +548,15 @@ notify_master({MNode, MPid}, Notification) ->
 %% TODO : have to implemnt.. using a table manager..
 acquire_table(JobId, WId) ->
   Table = table_manager:acquire_table(JobId, WId),
+  io:format("~n Acquired table.. [~p] from [~p] ~n", [Table, WId]),
   %% Vtable = Worker_store:table_name(Table, vertex),
   %% MTable = worker_store:table_name(Table, msg),
-  worker_store:init_step_file(vertex, JobId, WId, [write], 0),
-  worker_store:init_step_file(flag, JobId, WId, [write], 0),
-  worker_store:init_step_file(msg, JobId, WId, [write], 0),
+  worker_store:init_step_file(vertex, JobId, WId, {table, Table}, 0),
+  worker_store:init_step_file(flag, JobId, WId, {table, Table}, 0),
+  worker_store:init_step_file(msg, JobId, WId, {table, Table}, 0),
+  ets:insert(table_mapping, {{JobId, WId}, Table}), 
   Table.
 
-release_table(Table, _JobId, _WId) ->
-  table_manager:release_table(Table).
-  %% ets:delete(table_mapping, {JobId, WId}).
 
 register_worker(JobId, WId) ->
   ets:insert(worker_registry, {{JobId, WId}, self()}).
@@ -664,16 +666,24 @@ iterate_vertex({JobId, WId, NumWorkers, Step}, Sel, VTable, PrevMTable,
   lists:foldl(
     fun({VName, _}, FDs) ->
         [OldVInfo] =
-          case dets:lookup(VTable, VName) of
-            [OV] -> [OV];
-            {error, {premature_eof, _}} ->
-              %% Weird "premature_eof" error from dets sometimes
-              %% when size of partion is <500 and >=250
-              io:format("~n~nGot Error while looking up [~p, ~p]~n~n",
-                        [VTable, VName]),
-              worker_store:sync_table(VTable, true),
-              dets:lookup(VTable, VName)
-          end,
+          try
+            case dets:lookup(VTable, VName) of
+              [OV] -> [OV];
+              {error, {premature_eof, _}} ->
+                %% Weird "premature_eof" error from dets sometimes
+                %% when size of partion is <500 and >=250
+                io:format("~n~nGot Error 1 while looking up [~p, ~p]~n~n",
+                          [VTable, VName]),
+                worker_store:sync_table(VTable, true),
+                dets:lookup(VTable, VName)
+            end of
+            X -> X
+          catch
+            Er1:Er2 ->
+              io:format("~nNo Vertex foind [~p][~p][~p]~n", 
+                        [VName, VTable, {Er1, Er2}]),
+              throw(some_error)
+          end,                
         InMsgs = apply_combine(CombineFun, dets:lookup(PrevMTable, VName)),
         {NewV, OutMsgs, VState} = AlgoFun(OldVInfo, InMsgs),
         ?STORE(flag, CurrFTable, {VName, VState}),

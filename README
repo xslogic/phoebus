@@ -39,7 +39,7 @@ Getting it to work (Tested on Mac OS X Snow Leopard)
 Requirement: 
 * rebar (Download from http://hg.basho.com/rebar/downloads/rebar)
 * git
-* erlang (tested on R13B04)
+* erlang (tested on R14B)
 
 1) Clone github..
   

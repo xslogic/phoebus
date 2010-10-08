@@ -12,7 +12,7 @@
 
 %% API
 -export([start_link/1, acquire_table/2, 
-         release_table/1]).
+         release_table/1, lookup_table/2]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -58,7 +58,7 @@ init([PoolSize]) ->
   ets:new(table_pool, [named_table, public]),
   lists:foreach(
     fun(X) ->
-        Name = list_to_atom("worker_table_" ++ integer_to_list(X)),        
+        Name = list_to_atom("worker_table_" ++ integer_to_list(X)),
         ets:insert(table_pool, {Name, none, none})
     end, lists:seq(1, PoolSize)),
   {ok, []}.
@@ -82,7 +82,6 @@ handle_call({acquire, JobId, WId}, {Pid, _} = From, State) ->
   case ets:select(table_pool, [{{'$1', none, '_'}, [], ['$$']}], 1) of
     {[[T]], _} ->
       ets:insert(table_pool, {T, {JobId, WId}, MRef}),
-      ets:insert(table_mapping, {{JobId, WId}, T}), 
       {reply, T, State};
     _ ->
       {noreply, [{From, {JobId, WId}, MRef}|State]}
@@ -112,7 +111,6 @@ handle_cast({release, Table}, State) ->
     _ -> 
       [{From, CInfo, MRef}|Rest] = lists:reverse(State),
       ets:insert(table_pool, {Table, CInfo, MRef}),
-      ets:insert(table_mapping, {CInfo, Table}),
       gen_server:reply(From, Table),
       {noreply, lists:reverse(Rest)}
   end.
@@ -139,7 +137,6 @@ handle_info({'DOWN', MRef, _, _, _}, State) ->
         _ ->
           [{From, CInfo, MRef2}|Rest] = lists:reverse(State),
           ets:insert(table_pool, {Table, CInfo, MRef2}),
-          ets:insert(table_mapping, {CInfo, Table}),
           gen_server:reply(From, Table),
           {noreply, lists:reverse(Rest)}
       end;
@@ -177,3 +174,9 @@ code_change(_OldVsn, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+lookup_table(JobId, WId) ->
+  case ets:lookup(table_mapping, {JobId, WId}) of
+    [{_, T}] -> {table, T};
+    _ -> none
+  end.
+      

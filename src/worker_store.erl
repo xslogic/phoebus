@@ -9,6 +9,7 @@
 -module(worker_store).
 -include("phoebus.hrl").
 
+
 %% API
 -export([purge/0, init/2, store_vertex/4, 
          init_step_file/5, init_step_file/6, 
@@ -48,9 +49,8 @@ init(JobId, WId) ->
 init_step_file(Type, JobId, WId, Mode, Step) ->
   init_step_file(Type, JobId, WId, Mode, Step, Step).
 
-init_step_file(Type, JobId, WId, _Mode, Step, Idx) -> 
+init_step_file(Type, JobId, WId, {table, Table}, Step, Idx) -> 
   ok = mkdir_p(?STEP_DIR(JobId, WId, Step)),
-  [{_, Table}] = ets:lookup(table_mapping, {JobId, WId}),
   TableName = table_name(Table, Type, Step),
   ets:insert(worker_registry, {{TableName, sync}, 0}), 
   case dets:info(TableName) of
@@ -70,7 +70,11 @@ init_step_file(Type, JobId, WId, _Mode, Step, Idx) ->
                           {type, duplicate_bag}])
       end;
     _ -> {ok, TableName}
-  end.
+  end;
+init_step_file(Type, JobId, WId, _Mode, Step, Idx) -> 
+  ok = mkdir_p(?STEP_DIR(JobId, WId, Step)),
+  {table, Table} = table_manager:lookup_table(JobId, WId),
+  init_step_file(Type, JobId, WId, {table, Table}, Step, Idx).
         
 
 init_rstep_file(Type, JobId, WId, RWId, Mode, Step) ->
@@ -110,7 +114,7 @@ commit_step(JobId, WId, Step) ->
   {ok, FD} = file:open(?LAST_STEP_FILE(JobId, WId), [write]),
   file:write(FD, integer_to_list(Step)),
   file:close(FD),
-  [{_, Table}] = ets:lookup(table_mapping, {JobId, WId}),
+  {_, Table} = table_manager:lookup_table(JobId, WId),
   dets:close(table_name(Table, vertex, Step)),
   dets:close(table_name(Table, flag, Step)),
   dets:close(table_name(Table, msg, Step)),
@@ -121,7 +125,7 @@ commit_step(JobId, WId, Step) ->
 
 
 load_active_vertices(JobId, WId) ->  
-  [{_, Table}] = ets:lookup(table_mapping, {JobId, WId}),
+  {_, Table} = table_manager:lookup_table(JobId, WId),
   ActiveVerts = 
     dets:select(table_name(Table, vertex, 0),
                [{{'$1', '_', '_'}, [], ['$$']}]),
@@ -165,16 +169,23 @@ table_insert(Type, Table, X) ->
         case X of
           {VName, Msgs} ->
             lists:foreach(
-              fun(Msg) -> dets:insert(Table, {VName, Msg}) end, Msgs);
+              fun(Msg) -> ok = dets:insert(Table, {VName, Msg}) end, Msgs);
           Lst ->
             lists:foreach(
               fun({VName, Msgs}) ->
                   lists:foreach(
                     fun(Msg) -> 
-                        dets:insert(Table, {VName, Msg}) end, Msgs)
+                        ok = dets:insert(Table, {VName, Msg}) end, Msgs)
               end, Lst)
         end;
-      _ -> dets:insert(Table, X)
+      _ -> case is_list(X) of 
+             true -> 
+               lists:foreach(
+                 fun(Rec) -> 
+                     ok = dets:insert(Table, Rec)
+                 end, X);
+             _ -> ok = dets:insert(Table, X)
+           end
     end
   catch
     E1:E2 ->
@@ -247,7 +258,6 @@ trans_loop(LocalFName, ReadFD, WriteFD) ->
 
 recv_loop({init, Type}, JobId, WId, Mode, Step, Idx) ->
   Table = get_other_worker_table(JobId, WId, Type, Step),
-  %% {ok, FD} = init_step_file(Type, JobId, WId, Mode, Step, Idx),
   recv_loop({Type, Table, <<>>, 0}, JobId, WId, Mode, Step, Idx);
 recv_loop({Type, WriteFD, Buffer, RCount}, JobId, WId, Mode, Step, Idx) ->
   receive
@@ -276,8 +286,8 @@ wait_table_loop(_Type, _JobId, _OWid, Pid, _Step, 0) ->
 wait_table_loop(Type, JobId, OWid, Pid, Step, Counter) ->
   ?DEBUG("Checking for table...", 
          [{job, JobId}, {worker, OWid}, {counter, Counter}]),
-  case ets:lookup(table_mapping, {JobId, OWid}) of
-    [{_, Table}] ->
+  case table_manager:lookup_table(JobId, OWid) of
+    {_, Table} ->
       case dets:info(table_name(Table, Type, Step)) of
         undefined ->
           ?DEBUG("Table unopen... waiting..", 
@@ -299,7 +309,9 @@ get_other_worker_table(JobId, OWId, Type, Step) ->
   spawn(fun() -> wait_table_loop(Type, JobId, OWId, Pid, Step, 30) end),
   Table = 
     receive
-      {table, T} -> T;
+      {table, T} -> 
+        io:format("~n Got table.. [~p] from [~p] ~n", [T, OWId]),
+        T;
       %% TODO : have to think of something...
       {error, enoent} -> backup_table
     end,
