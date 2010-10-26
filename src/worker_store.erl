@@ -182,9 +182,10 @@ table_insert(Type, Table, X) ->
              true -> 
                lists:foreach(
                  fun(Rec) -> 
-                     ok = dets:insert(Table, Rec)
+                     dets:insert_new(Table, Rec)
                  end, X);
-             _ -> ok = dets:insert(Table, X)
+             _ -> 
+               ok = dets:insert(Table, X)
            end
     end
   catch
@@ -264,16 +265,16 @@ recv_loop({Type, WriteFD, Buffer, RCount}, JobId, WId, Mode, Step, Idx) ->
     {data, Data} -> 
       BinLines = re:split(Data, "\n"),
       %% io:format("~n~n Recvd lines : ~p ~n~n", [BinLines]),
-      {VRecs, Rem} = extract_records(Type, Buffer, BinLines),      
-      table_insert(Type, WriteFD, VRecs), 
+      {VRecs, Rem} = extract_records(Type, Buffer, BinLines),
       NewRCount = RCount + length(VRecs),
       case RCount > 750 of
         true -> 
           [{_, WPid}] = ets:lookup(worker_registry, {JobId, WId}),
-          gen_fsm:send_all_state_event(WPid, sync_table);
+          ok = gen_fsm:sync_send_all_state_event(WPid, sync_table);
         _ ->
           void
       end,
+      table_insert(Type, WriteFD, VRecs), 
       recv_loop({Type, WriteFD, Rem, NewRCount}, JobId, WId, Mode, 
                 Step, Idx);
     {close, WPid} -> WPid ! {done, self()}
@@ -309,9 +310,7 @@ get_other_worker_table(JobId, OWId, Type, Step) ->
   spawn(fun() -> wait_table_loop(Type, JobId, OWId, Pid, Step, 30) end),
   Table = 
     receive
-      {table, T} -> 
-        io:format("~n Got table.. [~p] from [~p] ~n", [T, OWId]),
-        T;
+      {table, T} -> T;
       %% TODO : have to think of something...
       {error, enoent} -> backup_table
     end,

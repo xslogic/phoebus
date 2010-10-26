@@ -432,6 +432,11 @@ handle_event(sync_table, StateName, #state{table = Table,
 %%                   {stop, Reason, Reply, NewState}
 %% @end
 %%--------------------------------------------------------------------
+handle_sync_event(sync_table, _From, StateName, #state{table = Table, 
+                                                       step = Step} = State) ->
+  worker_store:sync_table(Table, vertex, Step, true),
+  worker_store:sync_table(Table, msg, Step, true),
+  {reply, ok, StateName, State};
 handle_sync_event(_Event, _From, StateName, State) ->
   Reply = ok,
   {reply, Reply, StateName, State}.
