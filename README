@@ -2,10 +2,22 @@
 PHOEBUS
 =======
 
+Contents
+--------
+* Introduction
+* Computational Model
+* Distributed Processing
+* Getting it to work
+* Pluggable Storage and True Multi-Node Distribution with HDFS and Thrift
+* Next Steps
+* References
+  
+
 Introduction
 ------------
 Phoebus is a system written in Erlang for Distributed processing of very large graphs that span billions of vertices and edges. It is basically an implementation of Google's Pregel[1] paper.
 It supports a Distributed model of computation similar to MapReduce[2], but more tuned to Graph processing. 
+
 
 Computational Model
 -------------------
@@ -26,6 +38,7 @@ Computational Model
 * A User may additionally specify a 'MaxSteps' to stop the algorithm after a some number of super steps.
 * A User may additionally specify a 'Combine' funtion that is applied to the all the Messages targetted at a Vertex before the Compute function is applied to it. 
 
+
 Distributed Processing
 ----------------------
 * The Computational model allows the algorithm to be parallelly performed by a cluster of phoebus nodes.
@@ -33,7 +46,6 @@ Distributed Processing
 * The Master partitions the input graph and spawns a 'Worker' for each partition on one of the nodes of the cluster.
 * The Master then askes the Worker to perform a Super step on its partition and awaits notification from the Worker of Step completion.
 * The Step number is incremented untill all Workers report that they have no more 'active' Vertices and no more outstanding messages to be deliverd.
-
 
 
 Getting it to work (Tested on Mac OS X Snow Leopard)
@@ -96,7 +108,7 @@ Requirement:
   $ head -5 infile1 
   1 1 1 2 1 3 
   2 2 1 4 1 5 
-3 3 1 6 1 7 
+  3 3 1 6 1 7 
   4 4 1 8 1 9 
   5 5 1 10  1 11  
 
