@@ -66,9 +66,9 @@ start_link(Conf) ->
 %% @end
 %%--------------------------------------------------------------------
 init([Conf]) ->
-  {ok, SS} = phoebus_rw:init(proplists:get_value(input_dir, Conf)),
-  {ok, Partitions, SS2} = phoebus_rw:partition_input(SS),
-  phoebus_rw:destroy(SS2),
+  {ok, SS} = external_store:init(proplists:get_value(input_dir, Conf)),
+  {ok, Partitions, SS2} = external_store:partition_input(SS),
+  external_store:destroy(SS2),
   JobId = phoebus_utils:job_id(),
   %% NOTE: Workers must be of the form [{Node, wId, wPid, wMonRef, wState}]
   DefAlgoFun = 

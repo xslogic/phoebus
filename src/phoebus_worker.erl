@@ -119,8 +119,8 @@ vsplit_phase1(timeout, #state{worker_info = {JobId, WId},
                               part_file = Partition} = State) ->
   ?DEBUG("Worker In State.. ", [{state, vsplit_phase1}, {job, JobId}, 
                                 {worker, WId}]),
-  {ok, SS} = phoebus_rw:init(Partition),
-  {ok, RefPid, SS2} = phoebus_rw:read_vertices_start(SS),  
+  {ok, SS} = external_store:init(Partition),
+  {ok, RefPid, SS2} = external_store:read_vertices(SS),  
   %% notify_master({MNode, MPid}, {vsplit_phase1_done, WId, 0}),
   {next_state, vsplit_phase1, 
    State#state{sub_state = {reading_partition, {RefPid, SS2, []}}}};
@@ -167,7 +167,7 @@ vsplit_phase1({vertices_done, Vertices, RefPid, SS},
                                 {job, JobId}, 
                                 {worker, WId}]),
   NewFDs = handle_vertices(NumWorkers, WInfo, Vertices, 0, FDs),
-  phoebus_rw:destroy(SS),
+  external_store:destroy(SS),
   worker_store:sync_table(Table, vertex, 0, true),
   lists:foreach(
     fun({_, FD}) -> worker_store:close_step_file(vertex, FD) end, NewFDs),
@@ -333,13 +333,13 @@ store_result(timeout, #state{output_dir = OutputDir,
                              worker_info = {JobId, WId}} = State) ->
   ?DEBUG("Worker In State.. ", [{state, post_algo}, {job, JobId}, 
                                 {worker, WId}, {output_dir, OutputDir}]),
-  {ok, SS} = phoebus_rw:init(OutputDir ++ "part-" 
+  {ok, SS} = external_store:init(OutputDir ++ "part-" 
                              ++ integer_to_list(WId)),
   {ok, VTable} =
     worker_store:init_step_file(vertex, JobId, WId, [read], Step),
   SS2 = store_result_loop(SS, VTable, start),
   %% release_table(Table, JobId, WId),
-  phoebus_rw:destroy(SS2),
+  external_store:destroy(SS2),
   {next_state, await_master, State}.
 %% ------------------------------------------------------------------------
 %% store_result START
@@ -500,14 +500,14 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 store_result_loop(RWState, VTable, start) ->
   case dets:select(VTable, [{{'$1', '$2', '$3'}, [], ['$_']}], 5) of
     {Sel, Cont} ->
-      NewRWState = phoebus_rw:store_vertices(RWState,Sel),
+      NewRWState = external_store:store_vertices(RWState,Sel),
       store_result_loop(NewRWState, VTable, Cont);
     '$end_of_table' -> RWState
   end;
 store_result_loop(RWState, VTable, Cont) ->
   case dets:select(Cont) of
     {Sel, Cont2} ->
-      NewRWState = phoebus_rw:store_vertices(RWState,Sel),
+      NewRWState = external_store:store_vertices(RWState,Sel),
       store_result_loop(NewRWState, VTable, Cont2);
     '$end_of_table' -> RWState
   end.

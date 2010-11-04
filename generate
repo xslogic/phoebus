@@ -1,0 +1,1 @@
+rebar compile ; rm -rf rel/phoebus ; rm -rf deps/thrift_erl/rel/thrift_erl ; rebar generate; cp deps/thrift_erl/rel/thrift_erl/lib/thrift_erl-0.5.0.ez rel/phoebus/lib/; chmod +x ./rel/phoebus/bin/phoebus ; ./rel/phoebus/bin/phoebus co
