@@ -64,15 +64,18 @@ partition_input(State) ->
                          [#pathname{pathname = AbsPath}]),      
       Files = 
         lists:foldl(
-          fun(#fileStatus{isdir = false, path = P}, Acc) when is_binary(P) ->
+          fun(#fileStatus{isdir = false, path = P}, Acc) 
+              when is_binary(P) ->
               [binary_to_list(P)|Acc];
-             (#fileStatus{isdir = false, path = P}, Acc) when is_list(P) ->
+             (#fileStatus{isdir = false, path = P}, Acc) 
+              when is_list(P) ->
               [P|Acc];
              (_, Acc) -> Acc
           end, [], FSs),
       {ok, Files, State};
     _ ->
-      ?ERROR("URI not a directory", [{uri, proplists:get_value(uri, State)}]),
+      ?ERROR("URI not a directory", 
+             [{uri, proplists:get_value(uri, State)}]),
       destroy(State),
       {error, enotdir}
   end.
