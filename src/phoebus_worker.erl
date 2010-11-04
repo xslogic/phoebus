@@ -741,7 +741,7 @@ handle_msgs({JobId, WId, NumWorkers, Step}, WriteFDs, CurrMTable, Msgs) ->
               end,
             %% io:format("~n~n~nWriting [~p] into [~p]~n~n~n", [M, File]),
             file:write(WriteFD, 
-                          worker_store:serialize_rec(
+                          serde:serialize_rec(
                             msg, {VName, [Msg]})),
             NewWFDs
         end

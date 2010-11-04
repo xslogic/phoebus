@@ -207,7 +207,7 @@ read_log_loop(_, 0, Recs) -> {false, Recs};
 read_log_loop(FD, Count, Recs) ->
   case file:read_line(FD) of
     {ok, Data} ->
-      R = worker_store:deserialize_rec(msg, Data),
+      R = serde:deserialize_rec(msg, Data),
       read_log_loop(FD, Count - 1, [R|Recs]);
     eof -> 
       file:close(FD),
@@ -227,14 +227,14 @@ flush_buffer(#state{base_dir = BD, index = I,
          ({NewVName, Msg}, {VName, Buffer}) when VName =:= NewVName -> 
           {VName, [Msg|Buffer]};
          ({NewVName, Msg}, {VName, Buffer}) -> 
-          file:write(FD, worker_store:serialize_rec(
+          file:write(FD, serde:serialize_rec(
                            msg, {VName, apply_combine(C, Buffer)})),
           {NewVName, [Msg]}
       end, {start, []}, gb_sets:to_list(R)),
   case LastVName of
     start -> void;
     _ -> 
-      file:write(FD, worker_store:serialize_rec(
+      file:write(FD, serde:serialize_rec(
                        msg, {LastVName, apply_combine(C, LVMsgs)}))
   end,
   file:close(FD),
@@ -306,12 +306,12 @@ merge_files(WriteFD, CombineFun, {start, LReadFD}, {RLine, RReadFD}) ->
 merge_files(WriteFD, CombineFun, {LLine, LReadFD}, {RLine, RReadFD}) ->
   {RVName, RMsgs} = 
     case is_binary(RLine) of
-      true -> worker_store:deserialize_rec(msg, RLine);
+      true -> serde:deserialize_rec(msg, RLine);
       _ -> RLine
     end,
   {LVName, LMsgs} =
     case is_binary(LLine) of
-      true -> worker_store:deserialize_rec(msg, LLine);
+      true -> serde:deserialize_rec(msg, LLine);
       _ -> LLine
     end,
   case RVName of
@@ -323,12 +323,12 @@ merge_files(WriteFD, CombineFun, {LLine, LReadFD}, {RLine, RReadFD}) ->
       case (LVName < RVName) of
         true ->
           file:write(WriteFD, 
-                     worker_store:serialize_rec(msg, {LVName, LMsgs})),
+                     serde:serialize_rec(msg, {LVName, LMsgs})),
           merge_files(WriteFD, CombineFun, {start, LReadFD},
                       {{RVName, RMsgs}, RReadFD});
         _ ->
           file:write(WriteFD, 
-                     worker_store:serialize_rec(msg, {RVName, RMsgs})),
+                     serde:serialize_rec(msg, {RVName, RMsgs})),
           merge_files(WriteFD, CombineFun, {{LVName, LMsgs}, LReadFD},
                       {start, RReadFD})
       end
@@ -338,7 +338,7 @@ dump_rest(Line, ReadFD, WriteFD) ->
   case is_binary(Line) of
     true -> file:write(WriteFD, binary_to_list(Line));
     _ -> 
-      file:write(WriteFD, worker_store:serialize_rec(msg, Line))
+      file:write(WriteFD, serde:serialize_rec(msg, Line))
   end,
   loop_write(ReadFD, WriteFD).
 
