@@ -1,16 +1,26 @@
-%%%-------------------------------------------------------------------
-%%% @author Arun Suresh <>
-%%% @copyright (C) 2010, Arun Suresh
-%%% @doc
-%%%
-%%% @end
-%%% Created : 22 Sep 2010 by Arun Suresh <>
-%%%-------------------------------------------------------------------
--author('arun.suresh@gmail.com').
+%% -------------------------------------------------------------------
+%%
+%% Phoebus: A distributed framework for large scale graph processing.
+%%
+%% Copyright (c) 2007-2010 Basho Technologies, Inc.  All Rights Reserved.
+%%
+%% This file is provided to you under the Apache License,
+%% Version 2.0 (the "License"); you may not use this file
+%% except in compliance with the License.  You may obtain
+%% a copy of the License at
+%%
+%%   http://www.apache.org/licenses/LICENSE-2.0
+%%
+%% Unless required by applicable law or agreed to in writing,
+%% software distributed under the License is distributed on an
+%% "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY 
+%% KIND, either express or implied.  See the License for the 
+%% specific language governing permissions and limitations
+%% under the License.
+%%
+%% -------------------------------------------------------------------
+-author('Arun Suresh <arun.suresh@gmail.com>').
 
-%% -define(DEBUG(Str, Args), io:format(Str ++ ":~n~p~n", [Args])).
-%% -define(DEBUG(Str, Args), 
-%%         error_logger:info_msg(Str ++ ":~n~p~n", [Args])).
 -define(DEBUG(Str, Args), error_logger:info_report([Str|Args])).
 
 -define(BASE_DIR(), phoebus_utils:get_env(store_dir, "/tmp/phoebus/")).
