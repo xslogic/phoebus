@@ -48,7 +48,7 @@ Requirement:
 
 2) Compile and create release..
 
-  $ rebar compile ; rm -rf rel/phoebus ; rebar generate ; chmod +x ./rel/phoebus/bin/phoebus ; ./rel/phoebus/bin/phoebus 
+  $ ./generate 
     ==> rel (compile)
     ==> phoebus (compile)
     ....
@@ -62,7 +62,7 @@ Requirement:
 4) Start a two node Phoebus cluster... 
 
   Terminal 1:
-  $ env A_FILE=$PWD/vm1.args ./rel/phoebus/bin/phoebus console
+  $ ./run_phoebus 1 
   .....
   Erlang R13B04 (erts-5.7.5) [source] [64-bit] [smp:2:2] [rq:2] [async-threads:5] [hipe] [kernel-poll:true]
 
@@ -72,7 +72,7 @@ Requirement:
 
 
   Terminal 2:
-  $ env A_FILE=$PWD/vm2.args ./rel/phoebus/bin/phoebus console
+  $ ./run_phoebus 2 
   .....
   Erlang R13B04 (erts-5.7.5) [source] [64-bit] [smp:2:2] [rq:2] [async-threads:5] [hipe] [kernel-poll:true]
 
