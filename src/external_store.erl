@@ -31,9 +31,7 @@
          read_vertices/2,
          store_vertices/2,
          destroy/1,
-         check_dir/1,
-         deserialize/1,
-         serialize/1
+         check_dir/1
         ]).
 
 behaviour_info(callbacks) ->
@@ -62,7 +60,9 @@ init(URI) ->
           end
       end, {0, []}, RegisteredStores),
   case StoreMod of
-    0 -> {error, enostores};
+    0 -> 
+      ?ERROR("No registered store for URI", [{uri, URI}]),
+      {error, enostores};
     _ -> {ok, State}
   end.
 
@@ -84,17 +84,6 @@ store_vertices(StoreState, Vertices) ->
 destroy(StoreState) ->
   Mod = proplists:get_value(store_module, StoreState),
   Mod:destroy(StoreState).
-
-
-%% TODO : make the serializer/deserializer a separate module
-%%        and handle it properly..
-serialize(V) ->
-  worker_store:serialize_rec(vertex, V).
-
-deserialize(Line) when is_list(Line) ->
-  deserialize(Line, #vertex{}, [], [], vname);
-deserialize(Line) when is_binary(Line) ->
-  deserialize(binary_to_list(Line), #vertex{}, [], [], vname).
   
 
 %%--------------------------------------------------------------------
@@ -111,22 +100,3 @@ check_dir(URI) ->
     $/ -> true;
     _ -> false
   end.
-
-deserialize([$\n | _], #vertex{vertex_id = nil}, _, _, _) -> nil;
-deserialize([$\n | _], V, EList, _, _) ->
-  {V#vertex.vertex_name, V#vertex.vertex_value, EList};
-deserialize([$\t | Rest], V, EList, Buffer, vname) ->
-  VName = lists:reverse(Buffer),
-  VId = erlang:phash2(VName, 4294967296),
-  deserialize(Rest, V#vertex{vertex_id = VId, 
-                                vertex_name = VName}, EList, [], vval);
-deserialize([$\t | Rest], V, EList, Buffer, vval) ->
-  deserialize(Rest, V#vertex{vertex_value = lists:reverse(Buffer)}, 
-                 EList, [], eval);
-deserialize([$\t | Rest], V, EList, Buffer, eval) ->
-  deserialize(Rest, V, EList, [], {tvname, lists:reverse(Buffer)});
-deserialize([$\t | Rest], V, EList, Buffer, {tvname, EVal}) ->
-  VName = lists:reverse(Buffer),
-  deserialize(Rest, V, [{EVal, VName}|EList], [], eval);
-deserialize([X | Rest], V, EList, Buffer, Token) ->
-  deserialize(Rest, V, EList, [X|Buffer], Token).

@@ -48,7 +48,9 @@ partition_input(State) ->
       Base = proplists:get_value(uri, State),
       {ok, [Base ++ F || F <- Files], State};
     _ ->
-      {error, State}
+      ?ERROR("URI not a directory", [{uri, proplists:get_value(uri, State)}]),
+      destroy(State),
+      {error, enotdir}
   end.
 
 read_vertices(State, Recvr) ->
@@ -57,7 +59,9 @@ read_vertices(State, Recvr) ->
       start_reading(proplists:get_value(type, State), 
                     proplists:get_value(abs_path, State), Recvr, State);
     _ ->
-      {error, State}
+      ?ERROR("URI is a directory", [{uri, proplists:get_value(uri, State)}]),
+      destroy(State),
+      {error, eisdir}
   end.  
 
 store_vertices(State, Vertices) ->
@@ -72,16 +76,27 @@ store_vertices(State, Vertices) ->
           F -> {F, State}
         end,
       lists:foreach(
-        fun(V) -> file:write(FD, external_store:serialize(V)) end, Vertices),
+        fun(V) -> 
+            file:write(FD, serde:serialize_rec(vertex, V)) end, Vertices),
       NewState;
     _ ->
-      {error, State}
+      ?ERROR("URI is a directory", [{uri, proplists:get_value(uri, State)}]),
+      destroy(State),
+      {error, eisdir}
   end.  
 
 destroy(State) ->
   case proplists:get_value(open_file_ref, State) of
     undefined -> ok;
-    FD -> file:close(FD)
+    FD -> 
+      try
+        file:close(FD)
+      catch
+        E1:E2 ->
+          ?WARN("Error while closing file handle..", 
+                 [{error, E1}, {reason, E2}]),
+          ok
+      end
   end.
 
 %%--------------------------------------------------------------------
@@ -94,27 +109,26 @@ destroy(State) ->
 %%% Internal functions
 %%%===================================================================
 start_reading(file, File, Recvr, State) ->
-  RPid = spawn(fun() -> reader_loop({init, File}, Recvr, {State, []}) end),
+  RPid = spawn(fun() -> reader_loop({init, File}, Recvr, 
+                                    {State, <<>>, []}) end),
   {ok, RPid, State}.
 
 
-reader_loop({init, File}, Pid, State) ->
+reader_loop({init, File}, Pid, {StoreState, X, Y}) ->
   {ok, FD} = file:open(File, [raw, read_ahead, binary]),
-  reader_loop(FD, Pid, State);
-reader_loop(FD, Pid, {State, Buffer}) ->
-  case file:read_line(FD) of
-    {ok, Line} ->
-      case external_store:deserialize(Line) of
-        nil -> reader_loop(FD, Pid, {State, Buffer});
-        V -> 
-          case length(Buffer) > 100 of
-            true ->
-              gen_fsm:send_event(
-                Pid, {vertices, [V|Buffer], self(), State}),
-              reader_loop(FD, Pid, {State, []});
-            _ ->
-              reader_loop(FD, Pid, {State, [V|Buffer]})
-          end
+  reader_loop(FD, Pid, {[{open_file_ref, FD} | StoreState], X, Y});
+reader_loop(FD, Pid, {State, Rem, Buffer}) ->
+  case file:read(FD, 16384) of
+    {ok, Data} ->
+      {Vs, NewRem} = serde:deserialize_stream(vertex, Rem, Data),
+      NewBuffer = Vs ++ Buffer,
+      case length(NewBuffer) > 100 of
+        true ->
+          gen_fsm:send_event(
+            Pid, {vertices, NewBuffer, self(), State}),
+          reader_loop(FD, Pid, {State, NewRem, []});
+        _ ->
+          reader_loop(FD, Pid, {State, NewRem, NewBuffer})
       end;
     eof ->
       gen_fsm:send_event(Pid, {vertices_done, Buffer, self(), State}),

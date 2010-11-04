@@ -22,6 +22,8 @@
 -author('Arun Suresh <arun.suresh@gmail.com>').
 
 -define(DEBUG(Str, Args), error_logger:info_report([Str|Args])).
+-define(ERROR(Str, Args), error_logger:error_report([Str|Args])).
+-define(WARN(Str, Args), error_logger:warning_report([Str|Args])).
 
 -define(BASE_DIR(), phoebus_utils:get_env(store_dir, "/tmp/phoebus/")).
 -define(JOB_DIR(JobId, WId), 

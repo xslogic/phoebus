@@ -85,7 +85,8 @@ create_binary_tree(Dir, NumFiles, NumRecs) ->
     fun(N, [F|Rest]) ->
         Line = 
           lists:concat(
-            [Fn(N),"\t",Fn(N),"\t1\t",Fn(N*2),"\t1\t",Fn((N*2)+1),"\t\n"]),
+            [Fn(N),"\t",Fn(N),"\t", 
+             "1\t",Fn(N*2),"\t1\t",Fn((N*2)+1),"\t\r\n"]),
         file:write(F, Line),
         Rest ++ [F]
     end, FDs, lists:seq(1, NumRecs)),
