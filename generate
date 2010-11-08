@@ -1,5 +1,7 @@
 rebar get-deps 
+cd deps/thrift_erl
 rebar compile
+cd -
 rm -rf rel/phoebus
 rm -rf deps/thrift_erl/rel/thrift_erl
 rebar generate
