@@ -23,7 +23,7 @@
 -author('Arun Suresh <arun.suresh@gmail.com>').
 
 %% API
--export([shortest_path/2, create_binary_tree/3]).
+-export([shortest_path/3, create_binary_tree/3]).
 
 %%%===================================================================
 %%% API
@@ -33,16 +33,27 @@
 %% @spec
 %% @end
 %%--------------------------------------------------------------------
-shortest_path({VName, VValStr, EList}, InMsgs) ->
-  io:format("~n[~p]Recvd msgs : ~p ~n", [VName, InMsgs]),
-  {VInfo, O, S} = 
+shortest_path({VName, VValStr, EList}, LargestTillNow, InMsgs) ->
+  io:format("~n[~p]Recvd msgs : ~p : Aggregate : ~p ~n", 
+            [VName, InMsgs, LargestTillNow]),
+  LTN = list_to_integer(LargestTillNow),
+  NewLTN = 
+    lists:foldl(
+      fun({_, TV}, OldLTN) ->
+          TestLTN = list_to_integer(TV),
+          case TestLTN > OldLTN of
+            true -> TestLTN;
+            _ -> OldLTN
+          end
+      end, LTN, [{0, VName}|EList]),
+  {VInfo, O, NAgg, S} = 
     case VName of
       "1" ->
         OutMsgs = [{TV, VName} || {_, TV} <- EList],
-        {{VName, "_", EList}, OutMsgs, hold};
+        {{VName, "_", EList}, OutMsgs, integer_to_list(NewLTN), hold};
       _ ->
         case InMsgs of
-          [] -> {{VName, "inf", EList}, [], hold};
+          [] -> {{VName, "inf", EList}, [], LargestTillNow, hold};
           _ ->
             StartVal = case VValStr of VName -> "inf"; _ -> VValStr end,
             Shortest =
@@ -59,11 +70,11 @@ shortest_path({VName, VValStr, EList}, InMsgs) ->
             NewVVal = string:join(Shortest, ":"),
             OutMsgs =
               [{TV, VName ++ ":" ++ NewVVal} || {_, TV} <- EList],
-            {{VName, NewVVal, EList}, OutMsgs, hold}
+            {{VName, NewVVal, EList}, OutMsgs, integer_to_list(NewLTN), hold}
         end
     end,                            
   io:format("[~p]Sending msgs : ~p ~n", [VName, O]),
-  {VInfo, O, S}.
+  {VInfo, O, NAgg, S}.
 
 
 create_binary_tree(Dir, NumFiles, NumRecs) ->

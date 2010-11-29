@@ -41,7 +41,10 @@
          handle_sync_event/4, handle_info/3, terminate/3, code_change/4]).
 
 -record(state, {step = 0, max_steps, vertices = 0, job_id,
-                conf, workers = {[], []}, algo_sub_state = none}).
+                conf, workers = {[], []}, 
+                aggregate_val = none,
+                aggregate_fun = none,
+                algo_sub_state = none}).
 
 -record(algo_sub_state, {num_active = 0}).
 
@@ -86,10 +89,12 @@ init([Conf]) ->
   JobId = phoebus_utils:job_id(),
   %% NOTE: Workers must be of the form [{Node, wId, wPid, wMonRef, wState}]
   DefAlgoFun = 
-    fun({VName, _VValStr, EList}, _InMsgs) -> 
-        {{VName, "done", EList}, [], hold}
+    fun({VName, _VValStr, EList}, InAgg, _InMsgs) -> 
+        {{VName, "done", EList}, [], InAgg, hold}
     end,
   DefCombineFun = none,
+  AggVal = proplists:get_value(aggregate_val, Conf, none),
+  AggFun = proplists:get_value(aggregate_fun, Conf, none),
   %% DefCombineFun = fun(Msg1, Msg2) -> Msg1 ++ "||" ++ Msg2 end,
   Workers = start_workers(JobId, {erlang:node(), self()}, 
                           Partitions, 
@@ -97,10 +102,12 @@ init([Conf]) ->
                           proplists:get_value(algo_fun, 
                                               Conf, DefAlgoFun),
                           proplists:get_value(combine_fun, 
-                                              Conf, DefCombineFun)),
+                                              Conf, DefCombineFun),
+                          AggFun
+                         ),
   {ok, vsplit_phase1, 
    #state{max_steps = proplists:get_value(max_steps, Conf, 100000),
-          job_id = JobId,
+          job_id = JobId, aggregate_val = AggVal, aggregate_fun = AggFun,
           workers = {Workers, []}, conf = Conf}}.
 
 %%--------------------------------------------------------------------
@@ -169,19 +176,23 @@ vsplit_phase2({vsplit_phase2_done, WId, _WData},
 %% Description : copy vertex data to new dir..
 %% ------------------------------------------------------------------------
 vsplit_phase3({vsplit_phase3_done, WId, _WData}, 
-              #state{workers = Workers} = State) ->
+              #state{aggregate_val = Agg, workers = Workers} = State) ->
   {NewWorkers, NextState} = 
-    update_workers(vsplit_phase3, algo, bla, Workers, WId),  
+    update_workers(vsplit_phase3, algo, Agg, Workers, WId),  
   {next_state, NextState, State#state{workers = NewWorkers}}.
 %% ------------------------------------------------------------------------
 %% vsplit_phase3 DONE
 %% ------------------------------------------------------------------------
 
-algo({algo_done, WId, NumMsgsActive}, 
-     #state{step = Step, workers = Workers, 
+algo({algo_done, WId, InterAggregate, NumMsgsActive}, 
+     #state{workers = Workers, 
+            aggregate_val = CurrAgg,
+            aggregate_fun = AggFun,
             algo_sub_state = AS} = State) ->
+  NewAgg = apply_aggregate(AggFun, InterAggregate, CurrAgg),
   {NewWorkers, NextState} = 
-    update_workers(algo, post_algo, Step, Workers, WId),  
+    update_workers(algo, post_algo, NewAgg, Workers, WId),  
+  %% TODO : Compute Incremental Aggregate..
   NewSubState = 
     case AS of
       none -> #algo_sub_state{num_active = NumMsgsActive};
@@ -190,6 +201,7 @@ algo({algo_done, WId, NumMsgsActive},
     end,
   {next_state, NextState, State#state{
                             workers = NewWorkers, 
+                            aggregate_val = NewAgg,
                             algo_sub_state = NewSubState}}.
 
 
@@ -207,6 +219,7 @@ post_algo({post_algo_done, WId, _WData},
 
 
 check_algo_finish(timeout, #state{step = Step, max_steps = MaxSteps, 
+                                  aggregate_val = Agg,
                                   algo_sub_state = 
                                     #algo_sub_state{num_active = A},
                                   workers = {Workers, []}} = State) ->
@@ -219,14 +232,15 @@ check_algo_finish(timeout, #state{step = Step, max_steps = MaxSteps,
         end;
       _ -> {store_result, Step}
     end,
-  NewWorkers = notify_workers2(Workers, NextState, NextStep),
+  NewWorkers = notify_workers2(Workers, NextState, Agg),
   {next_state, NextState, State#state{workers = {NewWorkers, []}, 
                                       algo_sub_state = none,
                                       step = NextStep}}.
 
 
 store_result({store_result_done, WId, _WData}, 
-              #state{workers = Workers} = State) ->
+              #state{aggregate_val = Agg, workers = Workers} = State) ->  
+  io:format("~n Final Aggregate Value : [~p]~n !!", [Agg]),
   {NewWorkers, NextState} = 
     update_workers(store_result, end_state, bla, Workers, WId),
   {next_state, NextState, State#state{workers = NewWorkers}}.
@@ -392,7 +406,7 @@ name(StrName) ->
   list_to_atom("master_" ++ StrName). 
 
 start_workers(JobId, MasterInfo, Partitions, 
-              OutputDir, AlgoFun, CombineFun) ->
+              OutputDir, AlgoFun, CombineFun, AggFun) ->
   PartLen = length(Partitions),
   Nodes = phoebus_utils:all_nodes(),
   lists:foldl(
@@ -404,7 +418,10 @@ start_workers(JobId, MasterInfo, Partitions,
         {ok, WPid} = 
           rpc:call(Node, phoebus_worker, start_link, 
                    [{JobId, WId, Nodes}, PartLen, MasterInfo, Part, 
-                    OutputDir, AlgoFun, CombineFun]),
+                    OutputDir, AlgoFun, CombineFun, AggFun]),
         MRef = erlang:monitor(process, WPid),
         [{Node, WId, WPid, MRef, vsplit_phase1}|Workers]
     end, [], Partitions).
+
+apply_aggregate(none, Arg1, _) -> Arg1;
+apply_aggregate(AggFun, Agg1, Agg2) -> AggFun(Agg1, Agg2).   
