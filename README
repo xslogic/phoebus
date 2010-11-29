@@ -138,7 +138,7 @@ Requirement:
    ["79"]Sending msgs : [{"159","79:39:19:9:4:2:1"},{"158","79:39:19:9:4:2:1"}] 
    ....
 
-   This is just the output of the Combine function. "79" is the name of the vertex currently running the compute function, the Aggregate "127" is the largest vertex seen but any of the vertex(across ALL the phoebus nodes) running the algorithm. "Recvd msgs" are all the messages received by the vertex in that step. At the end of the compute function, vertex "79" has sent two messages.. one to vertex "159" and another to vertex "158".
+   This is just the output of the Combine function. "79" is the name of the vertex currently running the compute function, the Aggregate "127" is the largest vertex seen buy any of the vertex (across ALL the phoebus nodes) currently running the algorithm. "Recvd msgs" are all the messages received by the vertex in that step. At the end of the compute function, vertex "79" has sent two messages.. one to vertex "159" and another to vertex "158".
 
 7) Wait for Algorithm to end.. Once it finishes.. output will be written to "/tmp/output". Listing all Vertices with names starting with "20"... 
 
