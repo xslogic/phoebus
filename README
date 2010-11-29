@@ -1,3 +1,5 @@
+* UPDATE[29/11/2010] : Added support for 'Aggregate' function
+
 
 PHOEBUS
 =======
@@ -28,12 +30,17 @@ Computational Model
 * At each Super step, the Compute function is applied to all 'active' vertice of the graph.
 * Vertices communicate with each other via Message Passing.
 * The Compute function is provided with the Vertex record and all Messages sent to the Vertex in the previous SuperStep.
+* An 'Aggregate' can be used to pass some global state to each for the vertices that are executing in the current step via the 'Compute' function. 
+* A User may additionally specify an Aggregate function and an initial value for that aggregate function. 
 * A Compute funtion can
   - Mutate the value associated to a vertex
   - Add/Remove outgoing edges.
   - Mutate Edge weight
   - Send a Message to any other vertex in the graph.
   - Change state of the vertex from 'active' to 'hold'.
+  - Make some decision based on the value of the 'Aggregate' for that step.
+  - Return a modified 'Aggregate'.
+* The Aggregate function folds over all the aggregates returned by the Compute function. This new value is then used as the aggregate for the next step.
 * At the begining of each SuperStep, if there are no more active vertices -and- if there are no messages to be sent to any vertex, the algorithm terminates.
 * A User may additionally specify a 'MaxSteps' to stop the algorithm after a some number of super steps.
 * A User may additionally specify a 'Combine' funtion that is applied to the all the Messages targetted at a Vertex before the Compute function is applied to it. 
@@ -115,12 +122,23 @@ Requirement:
 
 6) Running a sample algo: The module "algos" has a sample Compute function that calculates shortest path to a Node    
 
-  (phoebusr1@my-machine)1> AFun = fun algos:shortest_path/2.
+  (phoebusr1@my-machine)1> AlgoFun = fun algos:shortest_path/3.
   #Fun<algos.shortest_path.2> 
-  (phoebusr1@my-machine)1> phoebus_master:start_link([{name, "first_ever"}, {max_steps, 100}, {algo_fun, AFun}, {input_dir, "file:///tmp/input/"}, {output_dir, "file:///tmp/output/"}]).
+  (phoebusr1@my-machine)2> AggFun = fun(X, Y) -> integer_to_list(erlang:max(list_to_integer(X), list_to_integer(Y))) end.
+  (phoebusr1@my-machine)3> phoebus_master:start_link([{name, "first_ever"}, {max_steps, 100}, {algo_fun, AlgoFun}, {aggregate_val, "0"}, {aggregate_fun, AggFun}, {input_dir, "file:///tmp/input/"}, {output_dir, "file:///tmp/output/"}]).
   ok
 
   Since the input has 4 files, phoebous spawns 4 workers.. 2 on each node...
+
+7) Running the example will print some inermmediate results on screen.
+
+   For eg :
+   ....
+   ["79"]Recvd msgs : ["39:19:9:4:2:1"] : Aggregate : "127" 
+   ["79"]Sending msgs : [{"159","79:39:19:9:4:2:1"},{"158","79:39:19:9:4:2:1"}] 
+   ....
+
+   This is just the output of the Combine function. "79" is the name of the vertex currently running the compute function, the Aggregate "127" is the largest vertex seen but any of the vertex(across ALL the phoebus nodes) running the algorithm. "Recvd msgs" are all the messages received by the vertex in that step. At the end of the compute function, vertex "79" has sent two messages.. one to vertex "159" and another to vertex "158".
 
 7) Wait for Algorithm to end.. Once it finishes.. output will be written to "/tmp/output". Listing all Vertices with names starting with "20"... 
 
@@ -154,7 +172,7 @@ Pluggable Storage and True Multi-Node Distribution with HDFS[3] and Thrift[4]
 Next Steps
 ----------
 * Need to fix Fault tolerence and Error Handling.. If Worker dies, master must ask another worker on another node to take up work
-* The Pregel paper talks of an 'Aggregate' Function... need to implement.. 
+* [DONE] The Pregel paper talks of an 'Aggregate' Function... need to implement.. 
 * Support Jobs written in Python.
 * Add support for Disco DFS[6]. 
 
