@@ -254,12 +254,14 @@ algo(timeout, #state{master_info = {MNode, MPid, _},
   %% Feed previous step data into Compute fun
   %% Store new stuff in current step file..
   {ok, PrevFTable} =
-    worker_store:init_step_file(flag, JobId, WId, [read], OldStep), 
+    worker_store:init_step_file(flag, JobId, WId, [read], OldStep),
+
   NumActive = get_num_active(PrevFTable),
   {ok, PrevMTable} = 
     worker_store:init_step_file(msg, JobId, WId, [read], OldStep),
 
   worker_store:init_step_file(vertex, JobId, WId, [write], NewStep),
+  worker_store:init_step_file(flag, JobId, WId, [write], NewStep), 
   worker_store:init_step_file(msg, JobId, WId, [write], NewStep),
   NumMessages = 
     dets:info(PrevMTable, size),  
@@ -598,7 +600,7 @@ run_algo({JobId, WId, NumWorkers},
   worker_store:sync_table(Table, vertex, Step, true),
   PrevFTable = worker_store:table_name(Table, flag, Step - 1),
   PrevMTable = worker_store:table_name(Table, msg, Step - 1),
-  CurrFTable = worker_store:table_name(Table, flag, Step - 1),
+  CurrFTable = worker_store:table_name(Table, flag, Step),
   CurrMTable = worker_store:table_name(Table, msg, Step),
   VTable = worker_store:table_name(Table, vertex, Step),
   {WriteFDs, NewAgg} = 
