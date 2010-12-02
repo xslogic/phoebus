@@ -71,10 +71,8 @@ compute_fun({VName, VName, EList}, Agg, _) ->
   NewVVal = "from_src=;from_dest=",
   {{VName, NewVVal, EList}, OutMsgs, Agg, active};
 compute_fun(CurrState, "done" = Agg, _) ->
-  %% io:format("~n Got done [~p] ~n", [CurrState]),
   {CurrState, [], Agg, hold};
 compute_fun({VName, VVal, EList} = _CurrState, Agg, []) ->
-  %% io:format("~n Am here 1 [~p] ~n", [CurrState]),
   [Src, Dest] = re:split(Agg, ":", [{return, list}]),
   OutMsgs = 
     case (Src =:= VName) orelse (Dest =:= VName) of
@@ -87,13 +85,8 @@ compute_fun({VName, VVal, EList} = _CurrState, Agg, []) ->
         end;
       _ -> []
     end,
-  %% case OutMsgs of
-  %%   [] -> void;
-  %%   _ -> io:format("[~p] Sending First Messages : ~p ~n", [VName, OutMsgs])
-  %% end,
   {{VName, VVal, EList}, OutMsgs, Agg, hold};
 compute_fun({VName, VVal, EList} = _CurrState, Agg, InMsgs) ->
-  %% io:format("~n Am here 2 [~p] ~n", [CurrState]),
   [TempSrcPath, TempDestPath] = re:split(VVal, ";", [{return, list}]),
   SplitFun = 
     fun(P) -> 

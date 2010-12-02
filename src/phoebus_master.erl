@@ -40,7 +40,8 @@
          state_name/3, handle_event/3,
          handle_sync_event/4, handle_info/3, terminate/3, code_change/4]).
 
--record(state, {step = 0, max_steps, vertices = 0, job_id,
+-record(state, {step = 0, max_steps, vertices = 0, 
+                job_id, job_name, start_time,
                 conf, workers = {[], []}, 
                 aggregate_val = none,
                 aggregate_fun = none,
@@ -83,11 +84,13 @@ start_link(Conf) ->
 %% @end
 %%--------------------------------------------------------------------
 init([Conf]) ->
+  JobId = phoebus_utils:job_id(),
+  JobName = proplists:get_value(name, Conf),
+  {T, _} = erlang:statistics(wall_clock),
+  io:format("~n### Starting Job : Id[~p] : Name[~p] ###~n", [JobId, JobName]),
   {ok, SS} = external_store:init(proplists:get_value(input_dir, Conf)),
   {ok, Partitions, SS2} = external_store:partition_input(SS),
   external_store:destroy(SS2),
-  JobId = phoebus_utils:job_id(),
-  %% NOTE: Workers must be of the form [{Node, wId, wPid, wMonRef, wState}]
   DefAlgoFun = 
     fun({VName, _VValStr, EList}, InAgg, _InMsgs) -> 
         {{VName, "done", EList}, [], InAgg, hold}
@@ -107,7 +110,8 @@ init([Conf]) ->
                          ),
   {ok, vsplit_phase1, 
    #state{max_steps = proplists:get_value(max_steps, Conf, 100000),
-          job_id = JobId, aggregate_val = AggVal, aggregate_fun = AggFun,
+          job_id = JobId, job_name = JobName, start_time = T,
+          aggregate_val = AggVal, aggregate_fun = AggFun,
           workers = {Workers, []}, conf = Conf}}.
 
 %%--------------------------------------------------------------------
@@ -211,8 +215,7 @@ post_algo({post_algo_done, WId, _WData},
     update_workers(post_algo, check_algo_finish, Step, Workers, WId),    
   case NextState of
     check_algo_finish ->
-      {next_state, check_algo_finish, 
-       State#state{workers = NewWorkers}, 0};
+      {next_state, check_algo_finish, State#state{workers = NewWorkers}, 0};
     _ ->
       {next_state, NextState, State#state{workers = NewWorkers}}
   end.
@@ -239,14 +242,23 @@ check_algo_finish(timeout, #state{step = Step, max_steps = MaxSteps,
 
 
 store_result({store_result_done, WId, _WData}, 
-              #state{aggregate_val = Agg, workers = Workers} = State) ->  
-  io:format("~n Final Aggregate Value : [~p]~n !!", [Agg]),
+              #state{workers = Workers} = State) ->  
   {NewWorkers, NextState} = 
-    update_workers(store_result, end_state, bla, Workers, WId),
-  {next_state, NextState, State#state{workers = NewWorkers}}.
+    change_state(store_result, end_state, bla, Workers, WId, false),
+  case NextState of
+    end_state ->
+      {next_state, end_state, State#state{workers = NewWorkers}, 0};
+    _ ->
+      {next_state, NextState, State#state{workers = NewWorkers}}
+  end.  
 
-end_state(_Event, State) ->
-  {next_state, end_state, State}.
+end_state(timeout, #state{job_id = JobId, job_name = JobName, 
+                          start_time = T, aggregate_val = Agg} = State) ->
+  {T2, _} = erlang:statistics(wall_clock),
+  io:format("~n### Job Ended : Id[~p] : Name[~p] "
+            ++ ": Aggegate [~p] : Time [~p] ###~n", 
+            [JobId, JobName, Agg, (T2 - T)]),
+  {stop, normal, State}.
 
 %%--------------------------------------------------------------------
 %% @private
@@ -358,8 +370,11 @@ code_change(_OldVsn, StateName, State, _Extra) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
-update_workers(CurrentState, NextState, ExtraInfo, 
-               {Waiting, Finished}, WId) ->
+update_workers(CurrentState, NextState, EInfo, {Waiting, Finished}, WId) ->
+  change_state(CurrentState, NextState, EInfo, {Waiting, Finished}, WId, true).
+
+change_state(CurrentState, NextState, ExtraInfo, 
+               {Waiting, Finished}, WId, NotifyWorkers) ->
   ?DEBUG("Master Recvd Event...", [{current, CurrentState}, 
                                      {next, NextState}, 
                                      {workers, {Waiting, Finished}},
@@ -378,7 +393,11 @@ update_workers(CurrentState, NextState, ExtraInfo,
     [] -> 
       ?DEBUG("Master Shifting States...", [{current, CurrentState}, 
                                              {next, NextState}]),
-      notify_workers(NewFinished, NextState, ExtraInfo),
+      case NotifyWorkers of
+        true ->
+          notify_workers(NewFinished, NextState, ExtraInfo);
+        _ -> void
+      end,
       {{NewFinished, NewWaiting}, NextState};
     _ -> {{NewWaiting, NewFinished}, CurrentState}
   end.

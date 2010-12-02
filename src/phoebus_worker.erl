@@ -357,7 +357,8 @@ post_algo(timeout, #state{master_info = {MNode, MPid, _},
 %% store_result START
 %% Description : store result to outdir..
 %% ------------------------------------------------------------------------
-store_result(timeout, #state{output_dir = OutputDir, 
+store_result(timeout, #state{master_info = {MNode, MPid, _},
+                             output_dir = OutputDir, 
                              step = Step,
                              worker_info = {JobId, WId}} = State) ->
   ?DEBUG("Worker In State.. ", [{state, post_algo}, {job, JobId}, 
@@ -369,6 +370,7 @@ store_result(timeout, #state{output_dir = OutputDir,
   SS2 = store_result_loop(SS, VTable, start),
   %% release_table(Table, JobId, WId),
   external_store:destroy(SS2),
+  notify_master({MNode, MPid}, {store_result_done, WId, 0}),
   {next_state, await_master, State}.
 %% ------------------------------------------------------------------------
 %% store_result START
@@ -582,7 +584,7 @@ notify_master({MNode, MPid}, Notification) ->
 %% TODO : have to implemnt.. using a table manager..
 acquire_table(JobId, WId) ->
   Table = table_manager:acquire_table(JobId, WId),
-  io:format("~n Acquired table.. [~p] from [~p] ~n", [Table, WId]),
+  io:format("~n Worker [~p] Acquired Table [~p] .. ~n", [WId, Table]),
   %% Vtable = Worker_store:table_name(Table, vertex),
   %% MTable = worker_store:table_name(Table, msg),
   worker_store:init_step_file(vertex, JobId, WId, {table, Table}, 0),
