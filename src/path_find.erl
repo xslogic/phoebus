@@ -9,18 +9,13 @@
 -module(path_find).
 
 %% API
--export([generate_input/6, compute_fun/3, aggregate_fun/2]).
+-export([generate_input/5, compute_fun/3, aggregate_fun/2]).
 
 %%%===================================================================
 %%% API
 %%%===================================================================
 
-%%--------------------------------------------------------------------
-%% NumBlocks = Blocks in a city
-%% Density = People per block
-%% Locs = Locs per block edge
-%%--------------------------------------------------------------------
-generate_input(Dir, NumFiles, NumBlocks, Density, Locs, {Min, Max}) ->
+generate_input(Dir, NumFiles, Islands, Boats, {Min, Max}) ->
   TargetDir = 
     case lists:last(Dir) of
       $/ -> ok = worker_store:mkdir_p(Dir), Dir;
@@ -34,21 +29,18 @@ generate_input(Dir, NumFiles, NumBlocks, Density, Locs, {Min, Max}) ->
                       [write]),
           [FD|AFDs]
       end, [], lists:seq(1, NumFiles)),  
-  People = [[[Pre|integer_to_list(Suf)] || Suf <- lists:seq(1, Density)]
-            || Pre <- lists:seq($A, $A + NumBlocks - 1)],
   Fn = fun(N) -> integer_to_list(N) end,
   lists:foldl(
-    fun(P, [F|Rest]) ->
+    fun(Is, [F|Rest]) ->
+        P = "I" ++ integer_to_list(Is), 
         Num = random:uniform(Max - Min + 1) + (Min - 1),
-        %% PLocs = [[$L, $O, $C | integer_to_list(random:uniform(Locs))] 
-        %%      || _N <- lists:seq(1, Num)],
         Line = 
           lists:concat(
-            [P,"\t",P,"\t"|[[$1,$\t,$L,$O,$C|Fn(random:uniform(Locs))] ++ "\t" 
+            [P,"\t",P,"\t"|[[$1,$\t,$B|Fn(random:uniform(Boats))] ++ "\t" 
                             || _N <- lists:seq(1, Num)]] ++ ["\t\r\n"]),
         file:write(F, Line),
         Rest ++ [F]
-    end, FDs, lists:concat(People)),
+    end, FDs, lists:seq(1, Islands)),
   lists:foreach(fun(FD) -> file:close(FD) end, FDs).
   
   
