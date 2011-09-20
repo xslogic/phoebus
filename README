@@ -58,7 +58,7 @@ Distributed Processing
 Getting it to work (Tested on Mac OS X Snow Leopard)
 ------------------
 Requirement: 
-* rebar (Download from http://hg.basho.com/rebar/downloads/rebar)
+* rebar (Download from https://github.com/downloads/basho/rebar/rebar and place in a direcotry that is in your PATH)
 * git
 * erlang (tested on R14B)
 
