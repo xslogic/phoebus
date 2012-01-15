@@ -1,12 +1,23 @@
 rebar get-deps 
+
+# get and compile thrift_erl
 cd deps/thrift_erl
 rebar compile
 rebar generate
 cd -
+
+# get and compile eleveldb
+cd deps/eleveldb
+rebar compile
+rebar generate
+cd -
+
 rebar compile
 rm -rf rel/phoebus
 rm -rf deps/thrift_erl/rel/thrift_erl
+rm -rf deps/eleveldb/rel/eleveldb
 rebar generate
 cp -r deps/thrift_erl/rel/thrift_erl/lib/thrift_erl* rel/phoebus/lib/
+cp -r deps/eleveldb/rel/eleveldb/lib/eleveldb* rel/phoebus/lib/
 chmod +x ./rel/phoebus/bin/phoebus
 ./rel/phoebus/bin/phoebus co

@@ -295,8 +295,8 @@ algo(timeout, #state{master_info = {MNode, MPid, _},
 %% ------------------------------------------------------------------------
 
 %% ------------------------------------------------------------------------
-%% post_algo START
-%% Description : wait for master.. and then commit the step..
+%% await_buffer_merge START
+%% Description : await all message buffers to finish merging..
 %% ------------------------------------------------------------------------
 await_buffer_merge({done_merge, Pid},
                    #state{master_info = {MNode, MPid, _}, 
@@ -328,7 +328,7 @@ await_buffer_merge({done_merge, Pid},
     _ -> {next_state, NextState, State#state{sub_state = SubState},Timeout}
   end.
 %% ------------------------------------------------------------------------
-%% post_algo DONE
+%% await_buffer_merge DONE
 %% ------------------------------------------------------------------------
 
 
